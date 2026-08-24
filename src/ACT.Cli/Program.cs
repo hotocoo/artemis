@@ -1,5 +1,6 @@
 
 using ACT.Cli;
+using ACT.Cli.Composition;
 using ACT.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -32,6 +33,9 @@ try
 {
     var configuration = ArtemisConfiguration.Build(globals, out _);
     var services = ArtemisHostFactory.BuildServices(configuration, globals);
+    services.AddArtemisPersistence();
+    services.AddArtemisPolicy();
+    services.AddArtemisRisk();
     await using var provider = services.BuildServiceProvider();
 
     if (!CommandRegistry.TryGet(rawArgs[0], out var handler))
