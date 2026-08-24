@@ -344,7 +344,46 @@ internal static class SchemaV1
     ];
 
     /// <summary>SHA-256 hex checksum of the complete v1 script; detects tampering with shipped DDL.</summary>
-    internal static string Checksum() =>
-        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join(";\n", Statements))))
-            .ToLowerInvariant();
+    internal static string Checksum() => MigrationScript.Checksum(string.Join(";\n", Statements));
+}
+
+/// <summary>Shared checksum rule for shipped migration scripts: SHA-256 hex over the exact DDL text.</summary>
+internal static class MigrationScript
+{
+    internal static string Checksum(string script) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(script))).ToLowerInvariant();
+}
+
+/// <summary>
+/// The complete ordered migration history a database must follow. New migrations append here and
+/// nowhere else; existing entries are frozen forever.
+/// </summary>
+internal static class Migrations
+{
+    internal static readonly (int Version, string Name, string Checksum, string[] Statements)[] Ordered =
+    [
+        (SchemaV1.Version, SchemaV1.Name, SchemaV1.Checksum(), SchemaV1.Statements),
+        (SchemaV2.Version, SchemaV2.Name, SchemaV2.Checksum(), SchemaV2.Statements),
+    ];
+}
+
+/// <summary>
+/// The v2 schema: operator triage columns on findings. Frozen once shipped - edits break deployed
+/// databases via checksum mismatch, exactly like v1. Plain nullable columns keep every v1 row
+/// valid without a rewrite; NULL simply means "never triaged".
+/// </summary>
+internal static class SchemaV2
+{
+    internal const int Version = 2;
+    internal const string Name = "finding-triage";
+
+    internal static readonly string[] Statements =
+    [
+        "ALTER TABLE findings ADD COLUMN triage_note TEXT",
+        "ALTER TABLE findings ADD COLUMN triaged_by TEXT",
+        "ALTER TABLE findings ADD COLUMN triaged_utc TEXT",
+    ];
+
+    /// <summary>SHA-256 hex checksum of the complete v2 script.</summary>
+    internal static string Checksum() => MigrationScript.Checksum(string.Join(";\n", Statements));
 }

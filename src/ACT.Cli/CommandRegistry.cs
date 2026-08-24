@@ -64,7 +64,7 @@ public static class HelpPrinter
         "doctor" => "environment health: db, audit chain, feeds, filesystem, network",
         "assessment" => "create, start, status, emergency stop and disarm assessments",
         "check" => "list built-in security checks",
-        "finding" => "list and show stored findings",
+        "finding" => "list, show, and triage stored findings",
         "report" => "generate JSON/CSV/Markdown/HTML/SARIF reports",
         "regression" => "replay machine-executable regression tests",
         "feed" => "refresh advisory feed state (stale data is labeled)",

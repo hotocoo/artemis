@@ -29,14 +29,27 @@ catch (ActException ex)
 }
 
 var configuration = ArtemisConfiguration.Build(globals, out var actOptions);
-var services = ArtemisHostFactory.BuildServices(configuration, globals);
-services.AddArtemisPersistence();
-services.AddArtemisPolicy();
-services.AddArtemisRisk();
-services.AddEmergencyStopProxy();
-services.AddHostedService<ScheduleTickService>();
+var port = actOptions.Ui.ConsolePort;
+var url = "http://127.0.0.1:" + port;
+// Must precede CreateBuilder: the web builder snapshots its configuration, URL settings included.
+Environment.SetEnvironmentVariable("ASPNETCORE_URLS", url);
 
-await using var provider = services.BuildServiceProvider();
+// The web host IS the composition root: pages, background tickers, and the database share one
+// container. A second, parallel provider here would leave every page resolving from an empty
+// container and every hosted service (database init, schedule ticks) never starting at all.
+var builder = WebApplication.CreateBuilder([]);
+ArtemisHostFactory.ConfigureServices(builder.Services, configuration, globals);
+builder.Services.AddArtemisPersistence();
+builder.Services.AddArtemisPolicy();
+builder.Services.AddArtemisRisk();
+builder.Services.AddEmergencyStopProxy();
+builder.Services.AddHostedService<ScheduleTickService>();
+
+var app = builder.Build();
+
+// Fail fast before the listener opens if storage is unreachable; initialization is idempotent
+// with the hosted DatabaseInitializationService that starts with the host.
+var provider = app.Services;
 var database = provider.GetRequiredService<ActDatabase>();
 await database.InitializeAsync(CancellationToken.None);
 
@@ -46,13 +59,6 @@ ArtemisRuntime.BindEmergencyStop(reason => latch.Arm(reason));
 
 // Console-initiated disarms reset the host-wide policy latch as well as the process-local view.
 provider.GetRequiredService<EmergencyStopProxy>().RegisterDisarmHook(() => latch.Disarm("operator-console"));
-
-var port = actOptions.Ui.ConsolePort;
-var url = "http://127.0.0.1:" + port;
-Environment.SetEnvironmentVariable("ASPNETCORE_URLS", url);
-
-var builder = WebApplication.CreateBuilder([]);
-var app = builder.Build();
 
 Console.WriteLine("ARTEMIS OPERATOR CONSOLE - loopback only: " + url);
 if (actOptions.Ui.OpenBrowserOnStart)
@@ -74,7 +80,10 @@ if (actOptions.Ui.OpenBrowserOnStart)
 app.MapGet("/", async (IServiceProvider sp) => Pages.Dashboard(sp));
 app.MapGet("/assessments", async (IServiceProvider sp) => Pages.Assessments(sp));
 app.MapGet("/findings", async (IServiceProvider sp, string? assessment, string? status) => Pages.Findings(sp, assessment, status));
-app.MapGet("/findings/{id}", async (IServiceProvider sp, Guid id) => Pages.FindingDetail(sp, id));
+app.MapGet("/findings/{id}", async (IServiceProvider sp, Guid id, string? triaged) =>
+    await Pages.FindingDetail(sp, id, triaged));
+app.MapPost("/findings/{id}/triage", async (IServiceProvider sp, Guid id, HttpRequest request) =>
+    await Pages.Triage(sp, id, request));
 app.MapGet("/audit", async (IServiceProvider sp) => Pages.Audit(sp));
 app.MapGet("/schedules", async (IServiceProvider sp) => Pages.Schedules(sp));
 app.MapGet("/config", (IServiceProvider sp) => Pages.Config(sp));
@@ -188,7 +197,12 @@ internal static class Pages
             ArtemisConsoleLayout.Render("Findings", "Findings", "<h1>Findings</h1>" + table), "text/html");
     }
 
-    public static async Task<IResult> FindingDetail(IServiceProvider sp, Guid id)
+    public static Task<IResult> FindingDetail(IServiceProvider sp, Guid id, string? triaged) =>
+        RenderFindingDetail(sp, id,
+            triaged is null ? null : "<p><b>Triage decision recorded.</b> The status below and the "
+            + "hash-chained audit log reflect it; the finding row shows who decided and why.</p>");
+
+    private static async Task<IResult> RenderFindingDetail(IServiceProvider sp, Guid id, string? banner)
     {
         var db = sp.GetRequiredService<ActDatabase>();
         var all = await db.ListFindingsAsync(null, null, null, 100000);
@@ -197,6 +211,7 @@ internal static class Pages
 
         var b = new StringBuilder();
         b.Append($"<h1>{Esc(finding.Title)}</h1>");
+        if (banner is not null) b.Append(banner);
         b.Append($"<p><span class=\"sev-{finding.TechnicalSeverity}\"><b>{finding.TechnicalSeverity}</b></span> ");
         b.Append($"confidence {finding.Confidence} ({finding.ConfidenceScore:0.00}), priority {finding.PriorityScore:0}, ");
         b.Append($"status <b>{finding.Status}</b>, category {finding.Category}.</p>");
@@ -215,7 +230,73 @@ internal static class Pages
         }
         b.Append($"<h3>Fingerprint</h3><pre>{finding.Fingerprint.Hash}</pre>");
         b.Append($"<p>First seen {finding.FirstSeenUtc:u} - last seen {finding.LastSeenUtc:u} - check {finding.CheckId.Value}</p>");
+
+        // Triage: the persisted operator decision plus the form that produces the next one.
+        // The select lists only the transitions the deterministic lifecycle allows from the
+        // current status, so an illegal transition cannot even be composed here.
+        var triage = await db.GetTriageAsync(finding.FindingId);
+        b.Append("<h3>Triage</h3>");
+        if (triage is { } decision)
+        {
+            b.Append("<p>Status <b>").Append(Esc(decision.Status)).Append("</b> decided by <b>")
+                .Append(Esc(decision.TriagedBy)).Append("</b> at ").Append(decision.TriagedUtc?.ToString("u"));
+            if (decision.Note is not null)
+            {
+                b.Append("<br>Note: ").Append(Esc(decision.Note));
+            }
+
+            b.Append("</p>");
+        }
+        else
+        {
+            b.Append("<p>No operator triage recorded yet.</p>");
+        }
+
+        var targets = FindingTransitions.AllowedTargets(finding.Status);
+        b.Append("<form class=\"inline\" method=\"post\" action=\"/findings/")
+            .Append(finding.FindingId).Append("/triage\">");
+        b.Append("<select name=\"status\">");
+        foreach (var target in targets)
+        {
+            b.Append("<option value=\"").Append(target).Append("\">").Append(target).Append("</option>");
+        }
+
+        b.Append("</select> ");
+        b.Append("<input type=\"text\" name=\"note\" style=\"min-width:22rem\" "
+            + "placeholder=\"Reason / note stored with the decision\" /> ");
+        b.Append("<button type=\"submit\">Record triage</button></form>");
         return Results.Content(ArtemisConsoleLayout.Render("Finding detail", "Findings", b.ToString()), "text/html");
+    }
+
+    /// <summary>
+    /// Console entry into the audited triage lifecycle. Success redirects back with the new status
+    /// visible; refusal re-renders the page with the engine's fail-closed reason instead of
+    /// pretending nothing happened.
+    /// </summary>
+    public static async Task<IResult> Triage(IServiceProvider sp, Guid id, HttpRequest request)
+    {
+        var form = await request.ReadFormAsync();
+        var statusRaw = form["status"].ToString();
+        var note = form["note"].ToString();
+        if (!Enum.TryParse<FindingStatus>(statusRaw, ignoreCase: true, out var status)
+            || !Enum.IsDefined(status))
+        {
+            return Results.BadRequest("Unknown triage status.");
+        }
+
+        var db = sp.GetRequiredService<ActDatabase>();
+        try
+        {
+            await db.TriageFindingAsync(id, status, "operator-console",
+                string.IsNullOrWhiteSpace(note) ? null : note.Trim(), CorrelationId.New());
+            return Results.Redirect($"/findings/{id}?triaged={status}", permanent: false);
+        }
+        catch (ActException ex)
+        {
+            var failure = "<p style=\"color:#b71c1c\"><strong>Triage refused:</strong> "
+                + Esc(ex.SafeMessage) + "</p>";
+            return await RenderFindingDetail(sp, id, failure);
+        }
     }
 
     public static async Task<IResult> Audit(IServiceProvider sp)

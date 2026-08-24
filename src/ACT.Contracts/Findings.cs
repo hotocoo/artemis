@@ -92,6 +92,42 @@ public sealed record FingerprintComponents(
     string RelevantResource,
     string FindingClass);
 
+/// <summary>
+/// The operator triage decision recorded against one finding: the status, who decided it, when,
+/// and why. Null fields mean the finding has never been triaged.
+/// </summary>
+public sealed record FindingTriage(
+    FindingStatus Status,
+    string? Note,
+    string? TriagedBy,
+    DateTimeOffset? TriagedUtc);
+
+/// <summary>
+/// The deterministic finding triage lifecycle. Every operator status change must follow an edge
+/// in this graph; anything else fails closed. Terminal decisions (FalsePositive, AcceptedRisk,
+/// Remediated) survive reobservation by design, so reversing one is always an explicit Reopened
+/// step, never a silent side effect.
+/// </summary>
+public static class FindingTransitions
+{
+    /// <summary>Returns every status a finding currently in 'from' may move to.</summary>
+    public static IReadOnlyList<FindingStatus> AllowedTargets(FindingStatus from) => from switch
+    {
+        FindingStatus.New or FindingStatus.Reopened =>
+            [FindingStatus.Confirmed, FindingStatus.AcceptedRisk, FindingStatus.FalsePositive, FindingStatus.Remediated],
+        FindingStatus.Confirmed =>
+            [FindingStatus.Remediated, FindingStatus.AcceptedRisk, FindingStatus.FalsePositive],
+        FindingStatus.Regressed =>
+            [FindingStatus.Confirmed, FindingStatus.Remediated, FindingStatus.AcceptedRisk, FindingStatus.FalsePositive],
+
+        // Terminal states open onto exactly one edge: explicit reopen for re-evaluation.
+        _ => [FindingStatus.Reopened]
+    };
+
+    /// <summary>Whether the transition from -> to is part of the documented lifecycle.</summary>
+    public static bool CanTransition(FindingStatus from, FindingStatus to) => AllowedTargets(from).Contains(to);
+}
+
 /// <summary>Statuses a report must be able to express honestly.</summary>
 public enum VerificationState
 {

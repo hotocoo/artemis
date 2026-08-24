@@ -165,44 +165,67 @@ public sealed partial class ActDatabase : IAsyncDisposable
             await bootstrap.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
         }
 
-        int? appliedVersion = null;
-        string? appliedChecksum = null;
+        var applied = new Dictionary<int, string>();
         await using (var query = connection.CreateCommand())
         {
-            query.CommandText = "SELECT version, checksum FROM schema_migrations;";
+            query.CommandText = "SELECT version, checksum FROM schema_migrations ORDER BY version;";
             await using var reader = await query.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
-            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
             {
-                appliedVersion = Convert.ToInt32(reader.GetValue(0), System.Globalization.CultureInfo.InvariantCulture);
-                appliedChecksum = reader.GetString(1);
+                applied[Convert.ToInt32(reader.GetValue(0), System.Globalization.CultureInfo.InvariantCulture)] =
+                    reader.GetString(1);
             }
         }
 
-        if (appliedVersion is not null)
+        // Applied versions must form an unbroken prefix of this build's migration order and every
+        // applied checksum must match the shipped script byte-for-byte. Gaps mean a database from
+        // a different lineage; extra versions mean a newer build wrote it. Either way the engine
+        // refuses to guess - schema drift is how stored evidence gets silently corrupted.
+        foreach (var migration in Migrations.Ordered)
         {
-            if (appliedVersion.Value != SchemaV1.Version)
+            if (applied.Remove(migration.Version, out var recordedChecksum))
+            {
+                if (!string.Equals(recordedChecksum, migration.Checksum, StringComparison.Ordinal))
+                {
+                    throw ActException.FailClosed(ErrorCategory.Persistence,
+                        "The stored database schema does not match this build.",
+                        $"Checksum mismatch for migration {migration.Version}: recorded {recordedChecksum}."
+                        + $" Expected {migration.Checksum}.");
+                }
+
+                continue;
+            }
+
+            if (applied.Count > 0)
             {
                 throw ActException.FailClosed(ErrorCategory.Persistence,
                     "The database was created by an incompatible engine version.",
-                    $"Found migration version {appliedVersion.Value}, expected {SchemaV1.Version}.");
+                    "Applied migrations [" + string.Join(", ", applied.Keys.OrderBy(v => v))
+                    + "] are not a prefix of this build's order.");
             }
 
-            if (!string.Equals(appliedChecksum, SchemaV1.Checksum(), StringComparison.Ordinal))
-            {
-                throw ActException.FailClosed(ErrorCategory.Persistence,
-                    "The stored database schema does not match this build.",
-                    $"Checksum mismatch for migration {SchemaV1.Version}: recorded {appliedChecksum}."
-                    + $" Expected {SchemaV1.Checksum()}.");
-            }
-
-            return;
+            await ApplyMigrationAsync(connection, migration, cancellationToken).ConfigureAwait(false);
         }
 
+        if (applied.Count > 0)
+        {
+            throw ActException.FailClosed(ErrorCategory.Persistence,
+                "The database was created by a newer engine version.",
+                "Unknown applied migrations [" + string.Join(", ", applied.Keys.OrderBy(v => v))
+                + "]; downgrade would corrupt them.");
+        }
+    }
+
+    private async Task ApplyMigrationAsync(
+        SqliteConnection connection,
+        (int Version, string Name, string Checksum, string[] Statements) migration,
+        CancellationToken cancellationToken)
+    {
         await using var transaction =
             await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            foreach (var statement in SchemaV1.Statements)
+            foreach (var statement in migration.Statements)
             {
                 await using var command = connection.CreateCommand();
                 command.Transaction = (SqliteTransaction)transaction;
@@ -216,9 +239,9 @@ public sealed partial class ActDatabase : IAsyncDisposable
                 INSERT INTO schema_migrations(version, name, checksum, applied_utc)
                 VALUES($version, $name, $checksum, $applied_utc)
                 """;
-            record.Parameters.AddWithValue("$version", SchemaV1.Version);
-            record.Parameters.AddWithValue("$name", SchemaV1.Name);
-            record.Parameters.AddWithValue("$checksum", SchemaV1.Checksum());
+            record.Parameters.AddWithValue("$version", migration.Version);
+            record.Parameters.AddWithValue("$name", migration.Name);
+            record.Parameters.AddWithValue("$checksum", migration.Checksum);
             record.Parameters.AddWithValue("$applied_utc", ActTime.Write(DateTimeOffset.UtcNow));
             await record.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
@@ -646,31 +669,123 @@ public sealed partial class ActDatabase : IAsyncDisposable
         }, cancellationToken);
 
     /// <summary>
-    /// Sets the triage status of one finding and appends a tamper-evident audit entry in the same
-    /// transaction. Fails closed when the finding does not exist.
+    /// Applies one operator triage decision inside a single transaction: validates the transition
+    /// against the deterministic lifecycle policy, records who decided what and why on the row
+    /// itself, and appends a tamper-evident audit entry. Fails closed on unknown findings, illegal
+    /// transitions, and no-op repeats - a silent 'success' there would hide operator error.
     /// </summary>
-    public Task SetFindingStatusAsync(
+    public Task<(Finding Finding, FindingTriage Triage)> TriageFindingAsync(
         Guid findingId,
-        FindingStatus status,
+        FindingStatus targetStatus,
         string actor,
+        string? note,
         CorrelationId correlation,
-        CancellationToken cancellationToken = default) =>
-        WriteAsync(async (connection, transaction, token) =>
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(actor))
         {
-            await using var command = Command(connection, transaction,
-                "UPDATE findings SET status = $status WHERE finding_id = $id");
-            command.Parameters.AddWithValue("$status", status.ToString());
-            command.Parameters.AddWithValue("$id", findingId.ToString());
-            var changes = await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
-            RequireRows(changes, $"finding {findingId}", "status update");
+            throw ActException.FailClosed(ErrorCategory.Configuration,
+                "A triage decision needs a named actor.",
+                $"Triage of finding {findingId} arrived with an empty actor.");
+        }
+
+        note = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        const int MaxNoteLength = 1000;
+        if (note is { Length: > MaxNoteLength })
+        {
+            throw ActException.FailClosed(ErrorCategory.Configuration,
+                $"The triage note must be at most {MaxNoteLength} characters.",
+                $"Triage note for finding {findingId} was {note.Length} characters.");
+        }
+
+        return WriteAsync(async (connection, transaction, token) =>
+        {
+            Finding existing;
+            await using (var query = Command(connection, transaction,
+                "SELECT * FROM findings WHERE finding_id = $id"))
+            {
+                query.Parameters.AddWithValue("$id", findingId.ToString());
+                await using var reader = await query.ExecuteReaderAsync(token).ConfigureAwait(false);
+                if (!await reader.ReadAsync(token).ConfigureAwait(false))
+                {
+                    throw ActException.FailClosed(ErrorCategory.Persistence,
+                        "The finding to triage does not exist.",
+                        $"No finding row {findingId}; refusing to invent one.");
+                }
+
+                existing = MapFinding(reader);
+            }
+
+            if (existing.Status == targetStatus)
+            {
+                throw ActException.FailClosed(ErrorCategory.Configuration,
+                    $"The finding is already marked {targetStatus}.",
+                    $"No-op triage of finding {findingId} rejected; pick a different status.");
+            }
+
+            if (!FindingTransitions.CanTransition(existing.Status, targetStatus))
+            {
+                throw ActException.FailClosed(ErrorCategory.Configuration,
+                    "That triage transition is not allowed.",
+                    $"Finding {findingId} is {existing.Status}; allowed targets: "
+                    + string.Join(", ", FindingTransitions.AllowedTargets(existing.Status)) + ".");
+            }
+
+            var triagedUtc = DateTimeOffset.UtcNow;
+            await using var update = Command(connection, transaction, """
+                UPDATE findings SET status = $status, triage_note = $note, triaged_by = $by, triaged_utc = $utc
+                WHERE finding_id = $id
+                """);
+            update.Parameters.AddWithValue("$status", targetStatus.ToString());
+            update.Parameters.AddWithValue("$note", DbOptional(note));
+            update.Parameters.AddWithValue("$by", actor.Trim());
+            update.Parameters.AddWithValue("$utc", Db(triagedUtc));
+            update.Parameters.AddWithValue("$id", findingId.ToString());
+            var changes = await update.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            RequireRows(changes, $"finding {findingId}", "triage update");
+
+            var auditResult = $"{existing.Status} -> {targetStatus}";
+            if (note is not null)
+            {
+                auditResult += ": " + note[..Math.Min(120, note.Length)];
+            }
 
             await AppendAuditCoreAsync(connection, transaction, new AuditDraft(
-                Actor: actor,
-                Action: "FINDING_STATUS_SET",
+                Actor: actor.Trim(),
+                Action: "finding.triaged",
                 ObjectType: "finding",
                 ObjectId: findingId.ToString(),
-                Result: status.ToString(),
+                Result: auditResult,
                 Correlation: correlation), token).ConfigureAwait(false);
+
+            return (existing with { Status = targetStatus },
+                new FindingTriage(targetStatus, note, actor.Trim(), triagedUtc));
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads the triage decision recorded against one finding. Returns null both when the row does
+    /// not exist and when it has never been triaged - callers that need to distinguish the two
+    /// check existence independently.
+    /// </summary>
+    public Task<FindingTriage?> GetTriageAsync(Guid findingId, CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            command.CommandText =
+                "SELECT status, triage_note, triaged_by, triaged_utc FROM findings WHERE finding_id = $id";
+            command.Parameters.AddWithValue("$id", findingId.ToString());
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            if (!await reader.ReadAsync(token).ConfigureAwait(false)
+                || reader.IsDBNull(reader.GetOrdinal("triaged_by")))
+            {
+                return null;
+            }
+
+            return new FindingTriage(
+                ActValues.Enum<FindingStatus>(reader.Str("status"), "status"),
+                reader.StrOrNull("triage_note"),
+                reader.Str("triaged_by"),
+                ActTime.Read(reader.Str("triaged_utc"), "triaged_utc"));
         }, cancellationToken);
 
     private static async Task InsertFindingAsync(
