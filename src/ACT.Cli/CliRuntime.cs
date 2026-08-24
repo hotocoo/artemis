@@ -174,9 +174,13 @@ internal static class ContractsDefaults
 /// <summary>Builds the service provider for command execution.</summary>
 public static class ArtemisHostFactory
 {
-    public static ServiceCollection BuildServices(IConfiguration configuration, GlobalOptions globals)
+    /// <summary>
+    /// Registers the shared engine services onto any container. Hosts that own a real application
+    /// lifetime (the operator console) apply this directly to the web builder so one container
+    /// serves pages, background services, and the database alike.
+    /// </summary>
+    public static void ConfigureServices(IServiceCollection services, IConfiguration configuration, GlobalOptions globals)
     {
-        var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(configuration);
         services.Configure<ActOptions>(configuration.GetSection(ActOptions.SectionName));
         services.AddSingleton(globals);
@@ -197,7 +201,13 @@ public static class ArtemisHostFactory
         // every consumer shares one configured pipeline instead of failing activation.
         services.AddSingleton<ILogger>(sp =>
             sp.GetRequiredService<ILoggerFactory>().CreateLogger("Artemis"));
+    }
 
+    /// <summary>Builds the service collection for command execution.</summary>
+    public static ServiceCollection BuildServices(IConfiguration configuration, GlobalOptions globals)
+    {
+        var services = new ServiceCollection();
+        ConfigureServices(services, configuration, globals);
         return services;
     }
 }

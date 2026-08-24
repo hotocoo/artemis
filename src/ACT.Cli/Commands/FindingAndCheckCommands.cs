@@ -46,8 +46,15 @@ public static class FindingCommands
     {
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: artemis finding list [--assessment ID] [--status STATUS] | finding show FINDING_ID");
+            Console.Error.WriteLine("usage: artemis finding list [--assessment ID] [--status STATUS]");
+            Console.Error.WriteLine("       artemis finding show FINDING_ID");
+            Console.Error.WriteLine("       artemis finding triage FINDING_ID --status STATUS [--note TEXT] [--actor ID]");
             return ExitCodes.UsageError;
+        }
+
+        if (args[0] == "triage")
+        {
+            return await TriageAsync(services, args[1..]);
         }
 
         var db = services.GetRequiredService<ActDatabase>();
@@ -139,6 +146,80 @@ public static class FindingCommands
 
         Console.Error.WriteLine("usage: artemis finding show FINDING_ID");
         return ExitCodes.UsageError;
+    }
+
+    /// <summary>
+    /// The operator path into the audited triage lifecycle: records a status decision with actor
+    /// and note on the row itself and in the hash-chained audit log. Illegal transitions fail
+    /// closed with the list of allowed targets so the operator is never left guessing.
+    /// </summary>
+    private static async Task<int> TriageAsync(IServiceProvider services, string[] args)
+    {
+        Guid? findingId = null;
+        FindingStatus? status = null;
+        string? note = null;
+        string? actor = null;
+
+        if (args.Length > 0 && !args[0].StartsWith('-'))
+        {
+            if (Guid.TryParse(args[0], out var parsed))
+            {
+                findingId = parsed;
+            }
+            else
+            {
+                Console.Error.WriteLine("error: '" + args[0] + "' is not a finding id");
+                return ExitCodes.UsageError;
+            }
+        }
+
+        for (var i = 1; i < args.Length - 1; i++)
+        {
+            switch (args[i])
+            {
+                case "--status":
+                    if (Enum.TryParse<FindingStatus>(args[i + 1], ignoreCase: true, out var parsedStatus)
+                        && Enum.IsDefined(parsedStatus))
+                    {
+                        status = parsedStatus;
+                    }
+
+                    break;
+                case "--note": note = args[i + 1]; break;
+                case "--actor": actor = args[i + 1]; break;
+            }
+        }
+
+        if (findingId is null || status is null)
+        {
+            Console.Error.WriteLine("usage: artemis finding triage FINDING_ID --status STATUS [--note TEXT] [--actor ID]");
+            Console.Error.WriteLine("       statuses: " + string.Join(", ", Enum.GetValues<FindingStatus>()));
+            return ExitCodes.UsageError;
+        }
+
+        var db = services.GetRequiredService<ActDatabase>();
+        await db.InitializeAsync();
+        try
+        {
+            var (updated, triage) = await db.TriageFindingAsync(
+                findingId.Value, status.Value, actor ?? "operator-cli", note, CorrelationId.New());
+
+            return await OutputWriter.WriteAsync(services,
+                "triaged " + updated.FindingId + ": " + updated.Status + " (by " + triage.TriagedBy + ")",
+                JsonSerializer.Serialize(new
+                {
+                    findingId = updated.FindingId,
+                    status = updated.Status.ToString(),
+                    actor = triage.TriagedBy,
+                    note = triage.Note,
+                    triagedUtc = triage.TriagedUtc
+                }, JsonOpts.Indented));
+        }
+        catch (ActException ex)
+        {
+            Console.Error.WriteLine("error: " + ex.SafeMessage);
+            return ExitCodes.RuntimeFailure;
+        }
     }
 }
 

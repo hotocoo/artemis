@@ -98,6 +98,16 @@ public sealed class PersistenceTests
         return Convert.ToInt64(raw, CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Runs one storage-level statement for arrange phases that must bypass the API.</summary>
+    private static async Task ExecAsync(PersistFixture fixture, string sql)
+    {
+        await using var connection = new SqliteConnection("Data Source=" + fixture.DatabasePath);
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = sql;
+        await command.ExecuteNonQueryAsync();
+    }
+
     // ---------- migrations ----------
 
     [Fact]
@@ -114,8 +124,76 @@ public sealed class PersistenceTests
             var tablesAfterSecond = await RawCountAsync(fixture,
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'");
 
-            Assert.Equal(1, migrationRows);
+            Assert.Equal(2, migrationRows);
             Assert.Equal(tablesAfterFirst, tablesAfterSecond);
+        }
+    }
+
+    [Fact]
+    public async Task Persist_MigrationV2UpgradesV1DatabaseInPlace()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = await CreatePairedAsync(db);
+            var finding = MakeFinding(assessment.AssessmentId, "upgrade-class");
+            await db.UpsertFindingAsync(finding);
+
+            // Rewind the file to a v1 state: drop the triage columns and forget migration 2.
+            // This is exactly what a database written by an older build looks like.
+            await using (var connection = new SqliteConnection("Data Source=" + fixture.DatabasePath))
+            {
+                await connection.OpenAsync();
+                foreach (var column in new[] { "triage_note", "triaged_by", "triaged_utc" })
+                {
+                    var drop = connection.CreateCommand();
+                    drop.CommandText = "ALTER TABLE findings DROP COLUMN " + column;
+                    await drop.ExecuteNonQueryAsync();
+                }
+
+                var forget = connection.CreateCommand();
+                forget.CommandText = "DELETE FROM schema_migrations WHERE version = 2";
+                await forget.ExecuteNonQueryAsync();
+            }
+
+            await db.DisposeAsync();
+
+            var upgraded = new ActDatabase(fixture.DatabasePath, new StorageOptions
+            {
+                DatabasePath = fixture.DatabasePath,
+                WalEnabled = true,
+                RetentionDays = 90
+            });
+            await using (upgraded)
+            {
+                await upgraded.InitializeAsync();
+
+                var versions = new List<long>();
+                await using (var connection =
+                    new SqliteConnection("Data Source=" + fixture.DatabasePath))
+                {
+                    await connection.OpenAsync();
+                    var query = connection.CreateCommand();
+                    query.CommandText = "SELECT version FROM schema_migrations ORDER BY version";
+                    await using var reader = await query.ExecuteReaderAsync();
+                    while (await reader.ReadAsync())
+                    {
+                        versions.Add(reader.GetInt64(0));
+                    }
+                }
+
+                Assert.Equal([1, 2], versions);
+
+                // Pre-existing rows survive untouched; the lifecycle works on them immediately.
+                Assert.Null(await upgraded.GetTriageAsync(finding.FindingId));
+                var (_, triage) = await upgraded.TriageFindingAsync(
+                    finding.FindingId, FindingStatus.AcceptedRisk, "upgrade-op",
+                    "risk accepted by change 42", CorrelationId.New());
+                Assert.Equal(FindingStatus.AcceptedRisk, triage.Status);
+                Assert.Equal("risk accepted by change 42", triage.Note);
+                Assert.True(await upgraded.VerifyChainAsync());
+            }
         }
     }
 
@@ -207,7 +285,8 @@ public sealed class PersistenceTests
                 var assessment = await CreatePairedAsync(db, "terminal-" + terminal);
                 var finding = MakeFinding(assessment.AssessmentId, "class-" + terminal);
                 await db.UpsertFindingAsync(finding);
-                await db.SetFindingStatusAsync(finding.FindingId, terminal, "triage-operator", CorrelationId.New());
+                await db.TriageFindingAsync(
+                    finding.FindingId, terminal, "triage-operator", note: null, CorrelationId.New());
 
                 var lateObservation = finding with { LastSeenUtc = finding.LastSeenUtc.AddDays(5) };
                 var result = await db.UpsertFindingAsync(lateObservation);
@@ -259,7 +338,7 @@ public sealed class PersistenceTests
     }
 
     [Fact]
-    public async Task Persist_SettingFindingStatusWritesAuditAndChangesStatus()
+    public async Task Persist_TriageWritesDecisionAndAuditsIt()
     {
         var fixture = await CreateDatabaseAsync();
         await using (fixture)
@@ -269,19 +348,158 @@ public sealed class PersistenceTests
             var finding = MakeFinding(assessment.AssessmentId, "status-class");
             await db.UpsertFindingAsync(finding);
 
+            Assert.Null(await db.GetTriageAsync(finding.FindingId));
+
             var correlation = CorrelationId.New();
-            await db.SetFindingStatusAsync(finding.FindingId, FindingStatus.Confirmed, "triage-op", correlation);
+            var (updated, triage) = await db.TriageFindingAsync(
+                finding.FindingId, FindingStatus.Confirmed, "triage-op", "verified against lab", correlation);
+
+            Assert.Equal(FindingStatus.Confirmed, updated.Status);
+            Assert.Equal(FindingStatus.Confirmed, triage.Status);
+            Assert.Equal("triage-op", triage.TriagedBy);
+            Assert.Equal("verified against lab", triage.Note);
+            Assert.NotNull(triage.TriagedUtc);
+
+            var stored = (await db.GetTriageAsync(finding.FindingId))!;
+            Assert.Equal(triage, stored);
 
             var listed = await db.ListFindingsAsync(status: FindingStatus.Confirmed, limit: 10);
             Assert.Equal(finding.FindingId, listed.Single().FindingId);
 
             var recent = await db.ReadRecentAuditAsync(5);
-            var statusEntry = Assert.Single(recent, e => e.Action == "FINDING_STATUS_SET");
-            Assert.Equal(finding.FindingId.ToString(), statusEntry.ObjectId);
-            Assert.Equal(correlation, statusEntry.Correlation);
+            var triageEntry = Assert.Single(recent, e => e.Action == "finding.triaged");
+            Assert.Equal("finding.triaged", triageEntry.Action);
+            Assert.Equal("triage-op", triageEntry.Actor);
+            Assert.Equal(finding.FindingId.ToString(), triageEntry.ObjectId);
+            Assert.Equal("New -> Confirmed: verified against lab", triageEntry.Result);
+            Assert.Equal(correlation, triageEntry.Correlation);
+
+            Assert.True(await db.VerifyChainAsync());
 
             await Assert.ThrowsAsync<ActException>(() =>
-                db.SetFindingStatusAsync(Guid.NewGuid(), FindingStatus.Confirmed, "triage-op", CorrelationId.New()));
+                db.TriageFindingAsync(Guid.NewGuid(), FindingStatus.Confirmed, "triage-op", null, CorrelationId.New()));
+        }
+    }
+
+    [Fact]
+    public async Task Persist_TriageEnforcesDeterministicTransitionMatrix()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+
+            // Every refused edge in the policy, exhaustively: seed the row straight into 'from'
+            // (storage-level arrange, since several statuses are engine-assigned), then require
+            // the transition to 'to' to fail closed as Configuration with the current state named.
+            foreach (var (from, to) in RefusedEdges())
+            {
+                var assessment = await CreatePairedAsync(db, "matrix-" + from + "-" + to);
+                var finding = MakeFinding(assessment.AssessmentId, "class-" + from + "-" + to);
+                await db.UpsertFindingAsync(finding);
+                await ExecAsync(fixture,
+                    "UPDATE findings SET status = '" + from + "' WHERE assessment_id = '"
+                    + assessment.AssessmentId.ToString("D") + "'");
+
+                var exception = await Assert.ThrowsAsync<ActException>(() =>
+                    db.TriageFindingAsync(finding.FindingId, to, "matrix-op", null, CorrelationId.New()));
+                Assert.Equal(ErrorCategory.Configuration, exception.Category);
+                Assert.Contains("allowed targets", exception.DiagnosticDetail, StringComparison.Ordinal);
+                Assert.Contains(from.ToString(), exception.DiagnosticDetail, StringComparison.Ordinal);
+
+                // A refused decision changes nothing on the row.
+                Assert.Null(await db.GetTriageAsync(finding.FindingId));
+                var unchanged = await db.ListFindingsAsync(assessmentId: assessment.AssessmentId, limit: 5);
+                Assert.Equal(from, unchanged.Single().Status);
+            }
+
+            // No-op repeats fail closed even though 'same status' feels harmless.
+            var noOpAssessment = await CreatePairedAsync(db, "matrix-noop");
+            var noOpFinding = MakeFinding(noOpAssessment.AssessmentId, "class-noop");
+            await db.UpsertFindingAsync(noOpFinding);
+            await db.TriageFindingAsync(
+                noOpFinding.FindingId, FindingStatus.Confirmed, "noop-op", null, CorrelationId.New());
+            await Assert.ThrowsAsync<ActException>(() =>
+                db.TriageFindingAsync(noOpFinding.FindingId, FindingStatus.Confirmed, "noop-op", null, CorrelationId.New()));
+
+            // Every legal edge in the policy actually executes end to end.
+            foreach (var (from, to) in LegalEdges())
+            {
+                var assessment = await CreatePairedAsync(db, "legal-" + from + "-" + to);
+                var finding = MakeFinding(assessment.AssessmentId, "legal-" + from + "-" + to);
+                await db.UpsertFindingAsync(finding);
+                if (from != FindingStatus.New)
+                {
+                    await ExecAsync(fixture,
+                        "UPDATE findings SET status = '" + from + "' WHERE assessment_id = '"
+                        + assessment.AssessmentId.ToString("D") + "'");
+                }
+
+                var (_, triage) = await db.TriageFindingAsync(
+                    finding.FindingId, to, "legal-op", null, CorrelationId.New());
+                Assert.Equal(to, triage.Status);
+                Assert.Equal("legal-op", triage.TriagedBy);
+            }
+
+            Assert.True(await db.VerifyChainAsync());
+        }
+    }
+
+    private static IEnumerable<(FindingStatus From, FindingStatus To)> RefusedEdges()
+    {
+        foreach (var from in Enum.GetValues<FindingStatus>())
+        {
+            var allowed = FindingTransitions.AllowedTargets(from);
+            foreach (var to in Enum.GetValues<FindingStatus>())
+            {
+                if (to != from && !allowed.Contains(to))
+                {
+                    yield return (from, to);
+                }
+            }
+        }
+    }
+
+    private static IEnumerable<(FindingStatus From, FindingStatus To)> LegalEdges()
+    {
+        foreach (var from in Enum.GetValues<FindingStatus>())
+        {
+            foreach (var to in FindingTransitions.AllowedTargets(from))
+            {
+                yield return (from, to);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Persist_ReopenedFindingIsReobservedNotResurrected()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = await CreatePairedAsync(db);
+            var finding = MakeFinding(assessment.AssessmentId, "reopen-class");
+            await db.UpsertFindingAsync(finding);
+
+            await db.TriageFindingAsync(
+                finding.FindingId, FindingStatus.Remediated, "rem-op", "fixed in build 2", CorrelationId.New());
+
+            // While terminal, reobservation must not touch the row at all.
+            var whileTerminal = await db.UpsertFindingAsync(
+                finding with { LastSeenUtc = finding.LastSeenUtc.AddDays(1) });
+            Assert.Equal(FindingStatus.Remediated, whileTerminal.Status);
+
+            // The operator reopens; the next observation refreshes recency but keeps the
+            // reopened state - it never silently resets to New or claims the old verdict.
+            var (reopened, _) = await db.TriageFindingAsync(
+                finding.FindingId, FindingStatus.Reopened, "reopen-op", "regression suspected", CorrelationId.New());
+            Assert.Equal(FindingStatus.Reopened, reopened.Status);
+
+            var lateObservation = finding with { LastSeenUtc = finding.LastSeenUtc.AddDays(3) };
+            var merged = await db.UpsertFindingAsync(lateObservation);
+            Assert.Equal(FindingStatus.Reopened, merged.Status);
+            Assert.Equal(lateObservation.LastSeenUtc, merged.LastSeenUtc);
         }
     }
 

@@ -39,6 +39,30 @@ During a run: every request passes rate limiting, scope verdicts, pinned DNS con
 - Console: `artemis-console` serves the operator UI on 127.0.0.1 only.
 - Reports: JSON, CSV, Markdown, HTML, SARIF 2.1. Coverage states distinguish tested / not tested / inaccessible / inconclusive / confirmed / inferred - reports never claim an environment is secure because checks passed.
 
+### Triaging findings
+
+Triage is an explicit, audited operator decision - the engine never invents one:
+
+```
+artemis finding triage FINDING_ID --status Confirmed --note "verified against lab" --actor alice
+artemis finding triage FINDING_ID --status FalsePositive --note "test data, not a leak"
+```
+
+The lifecycle is deterministic and enforced fail-closed on both surfaces (CLI and console):
+
+- **New / Reopened** may become Confirmed, AcceptedRisk, FalsePositive, or Remediated.
+- **Confirmed** may become Remediated, AcceptedRisk, or FalsePositive.
+- **Regressed** (a remediated finding re-detected by later runs) may be re-Confirmed or closed again.
+- Terminal decisions (**Remediated**, **AcceptedRisk**, **FalsePositive**) survive every
+  reobservation and open onto exactly one edge: explicit **Reopened**, so reversing a verdict is
+  always deliberate.
+
+Every decision records who decided, when, and why (note) directly on the finding row, plus a
+tamper-evident `finding.triaged` entry in the hash-chained audit log next to the original
+observation events. Illegal transitions, no-op repeats, and unknown findings are refused with the
+list of allowed targets rather than silently accepted. On the console, the finding detail page
+offers only the transitions the lifecycle allows from the current status.
+
 ## 5. Evidence, redaction, retention
 
 Evidence is redacted at creation (Authorization/Cookie headers, tokens, keys; strict mode available). Each scope's own `evidenceRetentionDays` governs how long that scope's evidence survives; audit entries form a SHA-256 hash chain you can verify at any time.
