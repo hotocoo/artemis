@@ -1,0 +1,55 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: "Authenticode-sign the artifacts (requires configured certificate secret)"
+        required: false
+        default: "false"
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Test everything first
+        run: |
+          dotnet test tests/ACT.Tests/ACT.Tests.csproj -c Release
+          dotnet test tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj -c Release
+          dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj -c Release
+
+      - name: Publish win-x64 single-file (CLI)
+        run: >
+          dotnet publish src/ACT.Cli/ACT.Cli.csproj -c Release -r win-x64
+          --self-contained true -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/publish/cli
+
+      - name: Publish win-x64 single-file (Desktop console)
+        run: >
+          dotnet publish src/ACT.Desktop/ACT.Desktop.csproj -c Release -r win-x64
+          --self-contained true -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/publish/desktop
+
+      - name: Checksums + manifest
+        shell: pwsh
+        run: ./scripts/New-ReleaseManifest.ps1 -ArtifactsRoot artifacts/publish -OutDir artifacts/release
+
+      - name: Authenticode sign (when enabled)
+        if: ${{ inputs.sign == 'true' }}
+        env:
+          ARTEMIS_SIGN_CERT: ${{ secrets.ARTEMIS_SIGN_CERT }}
+          ARTEMIS_SIGN_CERT_PASSWORD: ${{ secrets.ARTEMIS_SIGN_CERT_PASSWORD }}
+          ARTEMIS_TIMESTAMP_URL: ${{ vars.ARTEMIS_TIMESTAMP_URL }}
+        shell: pwsh
+        run: ./scripts/Sign-Release.ps1 -ArtifactDir artifacts/release
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artemis-release
+          path: artifacts/release/

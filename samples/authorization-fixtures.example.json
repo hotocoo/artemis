@@ -1,0 +1,29 @@
+{
+  "_comment": "SYNTHETIC EXAMPLE ONLY - shows the shape of operator-supplied authorization fixtures. Artemis never invents principals, tenants, or object ids.",
+  "principals": [
+    {
+      "principalId": "qa-admin-alpha",
+      "tenantId": "tenant-alpha",
+      "role": "admin",
+      "authenticationHeaders": {
+        "Authorization": "Bearer <test-token-for-qa-admin-alpha>"
+      }
+    },
+    {
+      "principalId": "qa-user-beta",
+      "tenantId": "tenant-beta",
+      "role": "user",
+      "authenticationHeaders": {
+        "X-Tenant": "tenant-beta",
+        "Authorization": "Bearer <test-token-for-qa-user-beta>"
+      }
+    }
+  ],
+  "objects": [
+    { "objectId": "i-1001", "ownerTenantId": "tenant-alpha", "relativePathTemplate": "/authz/items/{id}" }
+  ],
+  "expectations": [
+    { "expectationId": "beta-reads-alpha-item", "principalId": "qa-user-beta", "objectId": "i-1001", "httpMethod": "GET", "expectedStatusCode": 403, "invariantName": "cross-tenant-read-denied" },
+    { "expectationId": "alpha-reads-own-item", "principalId": "qa-admin-alpha", "objectId": "i-1001", "httpMethod": "GET", "expectedStatusCode": 200, "invariantName": "same-tenant-read-allowed" }
+  ]
+}
