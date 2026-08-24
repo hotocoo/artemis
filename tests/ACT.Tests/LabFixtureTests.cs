@@ -140,17 +140,23 @@ public class LabFixtureTests
         Assert.Contains("Path.Combine", source);
         Assert.Contains("Path.GetFullPath", source);
         Assert.Contains("StaysInsideRoot", source);
-        Assert.Contains("X-Lab-Traversal-Blocked", source);
+        Assert.Contains("LabConstants.TraversalBlockedHeader", source);
         Assert.Contains("\"blocked\"", source);
+
+        var constants = File.ReadAllText(LabSourceFile("LabConstants.cs"));
+        Assert.Contains("X-Lab-Traversal-Blocked", constants);
     }
 
     [Fact]
     public void Source_CorsOpenFixtureReflectsOriginsWithCredentials()
     {
         var source = File.ReadAllText(LabSourceFile("CorsEndpoints.cs"));
-        Assert.Contains("Access-Control-Allow-Origin", source);
-        Assert.Contains("Access-Control-Allow-Credentials", source);
+        Assert.Contains("AccessControlAllowOrigin", source);
+        Assert.Contains("AccessControlAllowCredentials", source);
         Assert.Contains("\"true\"", source);
+
+        var constants = File.ReadAllText(LabSourceFile("LabConstants.cs"));
+        Assert.Contains("X-Lab-Correlation", constants);
     }
 
     [Fact]

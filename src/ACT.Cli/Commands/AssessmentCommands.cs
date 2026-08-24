@@ -1,6 +1,7 @@
 
 using System.Text.Json;
 using ACT.Api;
+using ACT.Cli.Composition;
 using ACT.Contracts;
 using ACT.Core;
 using ACT.Evidence;
@@ -11,6 +12,7 @@ using ACT.Risk;
 using ACT.Scope;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace ACT.Cli;
 
@@ -29,6 +31,7 @@ public static class AssessmentCommands
             "create" => await CreateAsync(services, args[1..]),
             "start" => await StartAsync(services, args[1..]),
             "status" => await StatusAsync(services, args[1..]),
+            "stop" => await StopAsync(services, args[1..]),
             _ => Usage()
         };
 
@@ -109,10 +112,10 @@ public static class AssessmentCommands
         var gate = new PolicyGateAdapter(
             services.GetRequiredService<IPolicyEvaluator>(), emergency);
 
-        await using var http = new SafeHttpEngine(validator, validator, budget, limiter, NullLogger.Instance);
-        var context = new AssessmentContext(
+        await using var http = new SafeHttpEngine(validator, validator, budget, limiter, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
+        AssessmentContext context = new AssessmentContext(
             scope.AssessmentId, scope, validator, http, limiter,
-            new EvidenceFactory(redactor), NullLogger.Instance, fixtures, budget,
+            new EvidenceFactory(redactor), Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, fixtures, budget,
             Ledger: new CollectingLedger(), LanguageModel: null)
         {
             CancellationToken = CancellationToken.None
@@ -144,11 +147,25 @@ public static class AssessmentCommands
         }
 
         var correlation = CorrelationId.New();
+
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
+        var watcher = WatchEmergencyFlag(services, linkedCts, linkedCts.Token);
+        context = context with { CancellationToken = linkedCts.Token };
+
         var engine = services.GetRequiredService<AssessmentEngine>();
-        var summary = await engine.RunAsync(new AssessmentRunRequest(
-            scope.AssessmentId, correlation, scope, budget,
-            checks, contexts, PreexistingFindings: null,
-            Scorer: new DeterministicFindingScorer()), CancellationToken.None);
+        AssessmentRunSummary summary;
+        try
+        {
+            summary = await engine.RunAsync(new AssessmentRunRequest(
+                scope.AssessmentId, correlation, scope, budget,
+                checks, contexts, PreexistingFindings: null,
+                Scorer: new DeterministicFindingScorer()), linkedCts.Token);
+        }
+        finally
+        {
+            linkedCts.Cancel();
+            try { await watcher; } catch (OperationCanceledException) { }
+        }
 
         return await OutputWriter.WriteAsync(services,
             $"assessment {scope.AssessmentId} completed: {summary.ChecksExecuted} checks executed, " +
@@ -180,6 +197,63 @@ public static class AssessmentCommands
         return null;
     }
 
+    /// <summary>
+    /// Arms a persistent emergency-stop flag. Running engines poll this flag through the same
+    /// database they already use, so a separate 'artemis assessment stop' process cancels them.
+    /// </summary>
+    private static async Task<int> StopAsync(IServiceProvider services, string[] args)
+    {
+        var emergencyIndex = Array.FindIndex(args, a => a == "--emergency");
+        if (emergencyIndex < 0 || emergencyIndex + 1 >= args.Length)
+        {
+            Console.Error.WriteLine("error: assessment stop requires --emergency REASON");
+            Console.Error.WriteLine("       artemis assessment stop --emergency REASON");
+            return ExitCodes.UsageError;
+        }
+        var reason = args[emergencyIndex + 1];
+
+        var db = services.GetRequiredService<ActDatabase>();
+        await db.InitializeAsync();
+        await db.SetConfigAsync(EmergencyFlagKey, new EmergencyStopFlag(DateTimeOffset.UtcNow, reason));
+        await db.AppendAuditAsync(new AuditDraft(
+            "operator", "assessment.emergency_stop", "configuration", EmergencyFlagKey,
+            reason[..Math.Min(120, reason.Length)], CorrelationId.New()));
+
+        // Arm this process's latch too, so a console-hosted engine stops immediately.
+        services.GetRequiredService<EmergencyStop>().Arm(reason);
+
+        return await OutputWriter.WriteAsync(services,
+            "EMERGENCY STOP armed: " + reason,
+            JsonSerializer.Serialize(new { emergencyStop = true, reason }));
+    }
+
+    /// <summary>Polls the persisted emergency flag and cancels the linked token when armed.</summary>
+    private static async Task WatchEmergencyFlag(IServiceProvider services, CancellationTokenSource linked,
+        CancellationToken external)
+    {
+        var db = services.GetRequiredService<ActDatabase>();
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(external))
+            {
+                if (linked.IsCancellationRequested) return;
+                var flag = await db.GetConfigAsync<EmergencyStopFlag>(EmergencyFlagKey, external);
+                if (flag is not null)
+                {
+                    linked.Cancel();
+                    return;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // External cancellation ends the watcher normally.
+        }
+    }
+
+    internal const string EmergencyFlagKey = "emergency-stop";
+
     private static async Task<int> StatusAsync(IServiceProvider services, string[] args)
     {
         if (args.Length == 0 || !Guid.TryParse(args[0], out var id))
@@ -201,11 +275,15 @@ public static class AssessmentCommands
             {
                 record.AssessmentId, name = record.Name, state = record.State.ToString(),
                 record.CreatedUtc, record.CompletedUtc,
-                metrics == null ? null : new
-                {
-                    metrics.RequestsSent, metrics.ChecksExecuted, metrics.ChecksFailed,
-                    totalDurationMs = metrics.TotalDuration.TotalMilliseconds
-                }
+                    metrics = metrics == null
+                    ? null
+                    : new
+                      {
+                          requests = metrics.RequestsSent,
+                          checksExecuted = metrics.ChecksExecuted,
+                          checksFailed = metrics.ChecksFailed,
+                          totalDurationMs = metrics.TotalDuration.TotalMilliseconds
+                      }
             }, JsonOpts.Indented));
     }
 

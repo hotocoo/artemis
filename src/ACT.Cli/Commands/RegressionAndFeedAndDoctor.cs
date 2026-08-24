@@ -1,6 +1,9 @@
 
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using ACT.Contracts;
 using ACT.Core;
 using ACT.Network;
@@ -56,7 +59,7 @@ public static class RegressionCommands
         var limiter = new TokenBucketRateLimiter(scope.RequestsPerSecond);
         var budget = ResourceBudget.FromScope(scope, EngineDefaults.Conservative);
 
-        await using var http = new SafeHttpEngine(validator, validator, budget, limiter, NullLogger.Instance);
+        await using var http = new SafeHttpEngine(validator, validator, budget, limiter, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
 
         var generated = RegressionGenerator.TryGenerate(finding, fixtures, new Uri(baseUrlText));
         if (generated is null)
@@ -159,10 +162,10 @@ public static class FeedCommands
             var doc = JsonDocument.Parse(json);
             var name = doc.RootElement.GetProperty("feed").GetString() ?? "";
             var updated = doc.RootElement.TryGetProperty("updated", out var upd) && upd.GetBoolean();
-            await db.UpsertFeedAsync(new FeedRecord(name, AdvisoryFeedKind.OfflineFile, "", updated), CancellationToken.None);
-            await db.RecordFeedVersionAsync(name, DateTimeOffset.UtcNow,
-                doc.RootElement.TryGetProperty("sha256", out var h) ? h.GetString() : null,
-                updated, doc.RootElement.TryGetProperty("note", out var n) ? n.GetString() : null, CancellationToken.None);
+            var hashValue = doc.RootElement.TryGetProperty("sha256", out var h) ? h.GetString() ?? "" : "";
+            var noteValue = doc.RootElement.TryGetProperty("note", out var n) ? n.GetString() ?? "" : "";
+            await db.UpsertFeedAsync(new FeedRecord(name, AdvisoryFeedKind.OfflineFile, "", updated, DateTimeOffset.UtcNow));
+            await db.RecordFeedVersionAsync(name, DateTimeOffset.UtcNow, hashValue, updated, noteValue);
         }
 
         return await OutputWriter.WriteAsync(services,
@@ -209,8 +212,8 @@ public static class DoctorCommand
         var healthy = findingsList.All(f => f.Ok);
         return await OutputWriter.WriteAsync(services,
             string.Join(Environment.NewLine,
-                findingsList.Select(f => $"{(f.Ok ? "[ OK ]" : "[FAIL]")} {f.Check}: {f.Detail}") +
-                [Environment.NewLine + (healthy ? "doctor verdict: HEALTHY" : "doctor verdict: DEGRADED")]),
+                findingsList.Select(f => $"{(f.Ok ? "[ OK ]" : "[FAIL]")} {f.Check}: {f.Detail}")
+                    .Append(healthy ? "doctor verdict: HEALTHY" : "doctor verdict: DEGRADED")),
             JsonSerializer.Serialize(new { healthy, checks = findingsList.Select(f => new { check = f.Check, ok = f.Ok, detail = f.Detail }) },
                 JsonOpts.Indented));
     }

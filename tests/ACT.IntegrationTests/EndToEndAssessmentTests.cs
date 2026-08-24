@@ -1,5 +1,6 @@
 
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using ACT.Contracts;
 using ACT.Core;
@@ -88,25 +89,26 @@ public sealed class EndToEndAssessmentTests(LabFixture lab)
 
         var asset = new AssetRecord(Guid.NewGuid(), scope.AssessmentId, AssetKind.Url,
             "lab", lab.BaseUrl.ToString(), [], DateTimeOffset.UtcNow, WithinScope: true);
-        var checkContext = new SecurityCheckContext(context, asset, Service: null, BaseUrl: lab.BaseUrl);
 
-        var findings = new List<Finding>();
-        foreach (var check in BuildWebChecks())
+        var expectations = new (ISecurityCheck Check, string Path, string CheckId, Severity MinSeverity)[]
         {
-            var result = await check.ExecuteAsync(checkContext, CancellationToken.None);
-            Assert.True(result.Status is CheckExecutionStatus.Completed or CheckExecutionStatus.CompletedWithWarnings or CheckExecutionStatus.Skipped_NotApplicable,
-                $"{check.Metadata.Id.Value} returned {result.Status}");
-            findings.AddRange(result.Findings);
-        }
+            (new SecurityHeadersCheck(), "/headers/missing", "ACT-WEB-SECHEADERS-002", Severity.Medium),
+            (new CspCheck(), "/headers/missing", "ACT-WEB-CSP-001", Severity.Medium),
+            (new CookieFlagCheck(), "/cookies/bad", "ACT-WEB-COOKIE-001", Severity.Low),
+            (new CorsCheck(), "/cors/open", "ACT-WEB-CORS-001", Severity.High),
+            (new TlsRedirectCheck(), "/", "ACT-WEB-TLSREDIRECT-001", Severity.Medium),
+        };
 
-        // The lab's /headers/missing and /cookies/bad fixtures must be caught...
-        Assert.Contains(findings, f => f.CheckId.Value == "ACT-WEB-SECHEADERS-002" && f.TechnicalSeverity >= Severity.Medium);
-        Assert.Contains(findings, f => f.CheckId.Value == "ACT-WEB-COOKIE-001");
-        // ...and the CORS reflection fixture (Origin echo) must yield a High finding.
-        var cors = findings.Where(f => f.CheckId.Value == "ACT-WEB-CORS-001").ToList();
-        Assert.Contains(cors, f => f.TechnicalSeverity >= Severity.High);
-        // Cleartext origin without redirect enforcement on the same port must be flagged.
-        Assert.Contains(findings, f => f.CheckId.Value == "ACT-WEB-TLSREDIRECT-001");
+        foreach (var (check, path, checkId, minSeverity) in expectations)
+        {
+            var targetUrl = new Uri(lab.BaseUrl, path);
+            var checkContext = new SecurityCheckContext(context, asset, Service: null, BaseUrl: targetUrl);
+            var result = await check.ExecuteAsync(checkContext, CancellationToken.None);
+            Assert.True(result.Status is CheckExecutionStatus.Completed or CheckExecutionStatus.CompletedWithWarnings,
+                checkId + " returned " + result.Status);
+            Assert.Contains(result.Findings,
+                f => f.CheckId.Value == checkId && f.TechnicalSeverity >= minSeverity);
+        }
     }
 
     [Fact]
@@ -156,15 +158,14 @@ public sealed class EndToEndAssessmentTests(LabFixture lab)
                 {
                     await using var stream = client.GetStream();
                     var body = CompressZeros(10 * 1024 * 1024);
+                    var cr = ((char)13).ToString();
+                    var lf = ((char)10).ToString();
                     var header = Encoding.ASCII.GetBytes(
-                        "HTTP/1.1 200 OK
-Content-Type: text/plain
-Content-Encoding: gzip
-" +
-                        $"Content-Length: {body.Length}
-Connection: close
-
-");
+                        "HTTP/1.1 200 OK" + cr + lf +
+                        "Content-Type: text/plain" + cr + lf +
+                        "Content-Encoding: gzip" + cr + lf +
+                        "Content-Length: " + body.Length + cr + lf +
+                        "Connection: close" + cr + lf + cr + lf);
                     await stream.WriteAsync(header);
                     await stream.WriteAsync(body);
                     await stream.FlushAsync();

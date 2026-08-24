@@ -165,7 +165,7 @@ public sealed class OfflineFileAdvisoryProvider : ISecurityAdvisoryProvider
         JsonDocument document;
         try
         {
-            await using var content = new MemoryStream(bytes).ConfigureAwait(false);
+            using var content = new MemoryStream(bytes);
             document = await JsonDocument.ParseAsync(content, cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException)

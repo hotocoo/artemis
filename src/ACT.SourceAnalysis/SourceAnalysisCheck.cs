@@ -188,7 +188,7 @@ public sealed class SourceAnalysisCheck : ISecurityCheck
                 "A static pattern associated with this finding class matched source text at the recorded line numbers. " +
                 "Line numbers are excluded from the fingerprint so unrelated edits that shift lines do not create duplicate findings.",
             remediation: rule.Remediation,
-            new FingerprintComponents(Metadata.Id, repositoryName, file.RelativePath, rule.FindingClass),
+            new FingerprintComponents(Metadata.Id, file.RelativePath, rule.FindingClass, "source"),
             assetReference: file.AbsolutePath);
         findingsSink.Add(finding);
 

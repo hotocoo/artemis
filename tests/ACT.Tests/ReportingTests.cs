@@ -138,11 +138,16 @@ public class ReportFormattingTests
         var csv = await Render(input, ReportFormat.Csv);
 
         var rows = ParseCsv(csv);
-        Assert.Equal(2, rows.Length);
-        Assert.Equal(11, rows[0].Length);
-        Assert.Equal(11, rows[1].Length);
-        Assert.Equal(hostileTitle, rows[1][1]);
-        Assert.Equal("host,with,commas", rows[1][5]);
+        Assert.True(rows.Length == 2, "expected one header row plus one data row");
+        Assert.True(rows[0].Length == 11, "header must carry all 11 contract columns");
+        var dataRow = rows[1];
+        Assert.True(dataRow.Length == 11, "data row must carry all 11 contract columns");
+        Assert.Equal("id", rows[0][0]);
+        Assert.Equal("title", rows[0][1]);
+        Assert.Equal("fingerprint", rows[0][9]);
+        Assert.Equal("priority_score", rows[0][10]);
+        Assert.Equal(hostileTitle, dataRow[1]);
+        Assert.Equal("host,with,commas", dataRow[5]);
     }
 
     [Fact]
@@ -295,14 +300,24 @@ public class ReportFormattingTests
     [Fact]
     public async Task JsonRenderIsDeterministicAcrossItemOrderAndRepeats()
     {
-        var alpha = Item(Finding("Alpha", check: "CHK-A"), Evidence(Finding("Alpha", check: "CHK-A")));
+        var firstFinding = Finding("Alpha", check: "CHK-A");
+        var alpha = Item(firstFinding, Evidence(firstFinding));
         var beta = Item(Finding("Beta", check: "CHK-B"));
-        var first = Input(alpha, beta);
-        var reversed = Input(beta, alpha);
 
-        var jsonA = await Assembler().RenderAsync(first, ReportFormat.Json, CancellationToken.None);
-        var jsonB = await Assembler().RenderAsync(first, ReportFormat.Json, CancellationToken.None);
-        var jsonReversed = await Assembler().RenderAsync(reversed, ReportFormat.Json, CancellationToken.None);
+        // One shared assessment/scope/metrics identity; only the item order flips.
+        var assessment = Assessment();
+        var scope = Scope();
+        var metrics = new ScanMetricsRecord(assessment.AssessmentId, 120, 14, 1, 2, TimeSpan.FromMinutes(12), 45_678);
+        var coverage = new VerificationCoverage(Tested: 3, NotTested: 1, Inaccessible: 2, Inconclusive: 4, Confirmed: 5, Inferred: 6);
+        const string limitations = "Only the primary interface was reachable during the window.";
+
+        var forward = ReportInput.Create(assessment, scope, [alpha, beta], metrics, coverage, limitations, Stamp);
+        var backward = ReportInput.Create(assessment, scope, [beta, alpha], metrics, coverage, limitations, Stamp);
+
+        var assembler = Assembler();
+        var jsonA = await assembler.RenderAsync(forward, ReportFormat.Json, CancellationToken.None);
+        var jsonB = await assembler.RenderAsync(forward, ReportFormat.Json, CancellationToken.None);
+        var jsonReversed = await assembler.RenderAsync(backward, ReportFormat.Json, CancellationToken.None);
 
         Assert.Equal(jsonA, jsonB);
         Assert.Equal(jsonA, jsonReversed);
