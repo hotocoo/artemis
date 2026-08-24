@@ -47,6 +47,26 @@ Evidence is redacted at creation (Authorization/Cookie headers, tokens, keys; st
 
 OSV integration ships disabled by default. When enabled, retrieved advisories carry retrieval time and staleness flags - stale data is labeled stale, never silently presented as current. Offline snapshots with optional SHA-256 pinning work fully air-gapped.
 
-## 7. Emergency procedures
+
+## 7. Scheduled assessments
+
+Schedules re-run assessments automatically against a **frozen copy of a validated scope** - whatever passed structural validation at `add` time is exactly what runs later, revalidated before every fire. A schedule can never widen authorization.
+
+```
+artemis schedule add --name nightly-repo --scope my-scope.json --cron "0 3 * * *"
+artemis schedule list          # shows last run and next local-time occurrence
+artemis schedule disable SCHEDULE_ID
+artemis schedule tick          # execute everything due right now
+```
+
+Execution model:
+
+- The console host (`artemis-console`) ticks schedules automatically while it runs. Alternatively drive ticks from an external scheduler (cron, CI) via `artemis schedule tick`. **Use one ticker per database** - the console host OR external ticks, never both against one database, because due-selection reads `last_run_utc` without a distributed lease.
+- Each fire is its own assessment (fresh assessment id, same scope id), so reports stay addressable per run while drift comparisons group by scope.
+- While an emergency stop is armed, due schedules are skipped honestly (audited, left still due) and execute after disarming.
+- Local repository scopes run the network-free source and dependency analyses; with no advisory feed configured, dependency severities are reported as **inconclusive**, never as clean.
+- Every lifecycle event lands in the hash-chained audit log: created, enabled/disabled, run started/completed/failed, skipped for emergency stop.
+
+## 8. Emergency procedures
 
 Console button or `artemis assessment stop --emergency`: arms the latch, cancels all in-flight cancellable work, denies all new check execution until explicitly disarmed by an operator.

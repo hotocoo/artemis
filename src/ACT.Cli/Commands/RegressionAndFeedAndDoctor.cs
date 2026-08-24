@@ -2,17 +2,17 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 using ACT.Contracts;
 using ACT.Core;
 using ACT.Network;
 using ACT.Persistence;
 using ACT.Policy;
-using ACT.Risk;
 using ACT.Reporting;
+using ACT.Risk;
 using ACT.Scope;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace ACT.Cli;
 

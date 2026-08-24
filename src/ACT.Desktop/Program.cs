@@ -1,9 +1,6 @@
 
 using System.Text;
 using System.Text.Encodings.Web;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Routing;
 using ACT.Cli;
 using ACT.Cli.Composition;
 using ACT.Contracts;
@@ -12,7 +9,11 @@ using ACT.Desktop;
 using ACT.Persistence;
 using ACT.Policy;
 using ACT.Reporting;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 
 var rawArgs = args;
 GlobalOptions globals;
@@ -33,6 +34,7 @@ services.AddArtemisPersistence();
 services.AddArtemisPolicy();
 services.AddArtemisRisk();
 services.AddEmergencyStopProxy();
+services.AddHostedService<ScheduleTickService>();
 
 await using var provider = services.BuildServiceProvider();
 var database = provider.GetRequiredService<ActDatabase>();
@@ -218,10 +220,19 @@ internal static class Pages
         var rows = new StringBuilder();
         foreach (var schedule in schedules)
         {
-            rows.Append($"<tr><td>{Esc(schedule.Name)}</td><td>{Esc(schedule.CronExpression)}</td>");
-            rows.Append($"<td>{Esc(schedule.Trigger)}</td><td>{Esc(schedule.LastRunUtc?.ToString("u") ?? "never")}</td></tr>");
+            var next = "-";
+            if (CronSchedule.TryParse(schedule.CronExpression, out var cron))
+            {
+                try { next = cron.NextOccurrence(DateTimeOffset.Now).ToString("yyyy-MM-dd HH:mm"); }
+                catch (ActException) { next = "never"; }
+            }
+
+            rows.Append("<tr><td>" + Esc(schedule.Name) + "</td><td>" + Esc(schedule.CronExpression) + "</td>");
+            rows.Append("<td>" + Esc(schedule.Trigger.ToString()) + "</td>");
+            rows.Append("<td>" + (schedule.LastRunUtc is { } last ? Esc(last.ToLocalTime().ToString("u")) : "never") + "</td>");
+            rows.Append("<td>" + Esc(next) + "</td></tr>");
         }
-        var table = "<table><tr><th>Name</th><th>Cron (local)</th><th>Trigger</th><th>Last run</th></tr>" + rows + "</table>";
+        var table = "<table><tr><th>Name</th><th>Cron (local)</th><th>Trigger</th><th>Last run</th><th>Next run</th></tr>" + rows + "</table>";
         return Results.Content(
             ArtemisConsoleLayout.Render("Schedules", "Schedules", "<h1>Schedules</h1>" + table), "text/html");
     }
@@ -314,4 +325,40 @@ public static class ArtemisRuntime
     public static void BindEmergencyStop(Action<string> handler) => EmergencyStopRequested += handler;
 
     public static void RaiseEmergencyStop(string reason) => EmergencyStopRequested?.Invoke(reason);
+}
+
+/// <summary>
+/// Executes due persisted schedules while the console runs. Ticks quarter-hourly against the
+/// pure ScheduleTicker decision; cron expressions are local-time so minute-level schedules fire
+/// within one tick of their boundary. Failures are contained per tick - a broken schedule must
+/// never take the console down. See the operator manual single-ticker concurrency contract.
+/// </summary>
+internal sealed class ScheduleTickService(IServiceProvider services) : BackgroundService
+{
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                try
+                {
+                    await ScheduledExecutionHost.TickOnceAsync(services, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine("schedule tick failed: " + ex.Message);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Normal host shutdown path.
+        }
+    }
 }

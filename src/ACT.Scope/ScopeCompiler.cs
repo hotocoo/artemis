@@ -74,8 +74,29 @@ public sealed class CompiledScope
             return [new UrlPrefixMatcher(raw, uri)];
         }
 
-        // CIDR / bare IP form
-        if (trimmed.Contains('/') || IPAddressLike(trimmed))
+        // Path-anchored filesystem form ('/', '~/', './'). Tested first because these prefixes can
+        // never begin a CIDR range, while ranges DO contain slashes - a naive separator test would
+        // swallow every absolute path (which previously made repository scopes uncompilable).
+        if (trimmed.StartsWith('/') || trimmed.StartsWith("~/") || trimmed.StartsWith("./"))
+        {
+            if (targetType != TargetTypeKind.LocalSourceRepository && targetType != TargetTypeKind.LocalContainer &&
+                targetType != TargetTypeKind.TestEnvironment)
+            {
+                throw ActException.FailClosed(ErrorCategory.Scope,
+                    "A filesystem path appeared in a scope whose target type is not a local repository, container, or test environment.",
+                    $"Path entry '{raw}' incompatible with {targetType}.");
+            }
+            var expanded = trimmed.StartsWith("~/")
+                ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + trimmed[1..]
+                : trimmed;
+            return [new LocalRepositoryMatcher(raw, expanded)];
+        }
+
+        // CIDR / bare IP form: an entry bearing a slash must actually parse as a range, otherwise
+        // it fails closed rather than being silently reinterpreted. Bare addresses (no slash)
+        // compile as single-address ranges.
+        var looksLikeRange = trimmed.Contains('/') || IPAddressLike(trimmed);
+        if (looksLikeRange)
         {
             if (!IpMath.TryParseCidr(trimmed, out var network, out _))
             {
@@ -93,21 +114,19 @@ public sealed class CompiledScope
             return [new IpRangeMatcher(raw, [trimmed])];
         }
 
-        // Filesystem form
-        if (trimmed.StartsWith('/') || trimmed.StartsWith("~/") || trimmed.StartsWith("./") ||
-            trimmed.Contains(Path.DirectorySeparatorChar) || trimmed.Contains(Path.AltDirectorySeparatorChar))
+        // Separator-bearing leftovers are relative paths: admissible only where a local repository
+        // or container root gives them meaning; anywhere else they fail closed instead of quietly
+        // becoming something host-like.
+        if (trimmed.Contains(Path.DirectorySeparatorChar) || trimmed.Contains(Path.AltDirectorySeparatorChar))
         {
             if (targetType != TargetTypeKind.LocalSourceRepository && targetType != TargetTypeKind.LocalContainer &&
                 targetType != TargetTypeKind.TestEnvironment)
             {
                 throw ActException.FailClosed(ErrorCategory.Scope,
-                    "A filesystem path appeared in a scope whose target type is not a local repository, container, or test environment.",
-                    $"Path entry '{raw}' incompatible with {targetType}.");
+                    "An entry containing a path separator could not be parsed as an authorized target; path-like entries require a local repository, container, or test environment scope.",
+                    $"Entry '{raw}' incompatible with {targetType}.");
             }
-            var expanded = trimmed.StartsWith("~/")
-                ? Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) + trimmed[1..]
-                : trimmed;
-            return [new LocalRepositoryMatcher(raw, expanded)];
+            return [new LocalRepositoryMatcher(raw, trimmed)];
         }
 
         // Numeric-looking garbage that failed strict parsing must never become a hostname.

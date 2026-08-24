@@ -59,6 +59,31 @@ public sealed partial class ActDatabase
             return (IReadOnlyList<ScheduleDefinition>)schedules;
         }, cancellationToken);
 
+    /// <summary>Returns every schedule regardless of enabled state, in creation order.</summary>
+    public Task<IReadOnlyList<ScheduleDefinition>> ListAllSchedulesAsync(CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            command.CommandText = "SELECT * FROM schedules ORDER BY created_utc ASC";
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var schedules = new List<ScheduleDefinition>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                schedules.Add(MapSchedule(reader));
+            }
+
+            return (IReadOnlyList<ScheduleDefinition>)schedules;
+        }, cancellationToken);
+
+    /// <summary>Returns one schedule by identifier or null when unknown.</summary>
+    public Task<ScheduleDefinition?> GetScheduleAsync(Guid scheduleId, CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            command.CommandText = "SELECT * FROM schedules WHERE schedule_id = $id";
+            command.Parameters.AddWithValue("$id", scheduleId.ToString());
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            return await reader.ReadAsync(token).ConfigureAwait(false) ? MapSchedule(reader) : null;
+        }, cancellationToken);
+
     /// <summary>Records that a schedule ran. Fails closed when the schedule does not exist.</summary>
     public Task MarkScheduleRanAsync(Guid scheduleId, DateTimeOffset ranUtc, CancellationToken cancellationToken = default) =>
         WriteAsync(async (connection, transaction, token) =>

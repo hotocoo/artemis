@@ -63,6 +63,70 @@ public class CronScheduleTests
     }
 }
 
+/// <summary>
+/// Zone-independent due-selection checks: every fixture picks instants whose relationship
+/// holds under any host time zone, because the ticker converts stored UTC to local itself.
+/// </summary>
+public class ScheduleTickerTests
+{
+    private static ScheduleDefinition MakeSchedule(string cron, DateTimeOffset? lastRunUtc) => new(
+        ScheduleId: Guid.NewGuid(), Name: "unit-schedule", ScopeId: Guid.NewGuid(),
+        CronExpression: cron, Trigger: ScheduleTriggerKind.Scheduled,
+        Enabled: true, CreatedUtc: DateTimeOffset.UtcNow, LastRunUtc: lastRunUtc);
+
+    [Fact]
+    public void NeverRanSchedule_IsImmediatelyDue()
+    {
+        var decisions = ScheduleTicker.Evaluate([MakeSchedule("*/5 * * * *", null)], DateTimeOffset.Now);
+        Assert.Single(decisions);
+        Assert.Equal(ScheduleDueState.Due, decisions[0].State);
+    }
+
+    [Fact]
+    public void DailySchedule_RanToday_IsNotDueUntilNextMidnight()
+    {
+        // Ran one minute ago; a daily expression cannot fire again this soon in any zone.
+        var decisions = ScheduleTicker.Evaluate(
+            [MakeSchedule("0 0 * * *", DateTimeOffset.Now.AddMinutes(-1))], DateTimeOffset.Now);
+        Assert.Equal(ScheduleDueState.NotDue, decisions[0].State);
+    }
+
+    [Fact]
+    public void DailySchedule_LastRanTwoDaysAgo_IsPastDue()
+    {
+        // Whatever the zone, a daily schedule missed twice must fire on the next tick.
+        var decisions = ScheduleTicker.Evaluate(
+            [MakeSchedule("0 0 * * *", DateTimeOffset.Now.AddDays(-2))], DateTimeOffset.Now);
+        Assert.Equal(ScheduleDueState.Due, decisions[0].State);
+    }
+
+    [Fact]
+    public void UnparseableExpression_IsReportedNotThrown()
+    {
+        var decisions = ScheduleTicker.Evaluate([MakeSchedule("61 * * * *", null)], DateTimeOffset.Now);
+        Assert.Single(decisions);
+        Assert.Equal(ScheduleDueState.InvalidExpression, decisions[0].State);
+    }
+
+    [Fact]
+    public void InputOrder_IsPreservedAcrossDecisions()
+    {
+        var first = MakeSchedule("0 0 * * *", null);
+        var second = MakeSchedule("not-a-cron", null);
+        var third = MakeSchedule("*/10 * * * *", DateTimeOffset.Now.AddMinutes(-1));
+
+        var decisions = ScheduleTicker.Evaluate([first, second, third], DateTimeOffset.Now);
+
+        Assert.Equal(3, decisions.Count);
+        Assert.Equal(first.ScheduleId, decisions[0].Schedule.ScheduleId);
+        Assert.Equal(ScheduleDueState.Due, decisions[0].State);
+        Assert.Equal(second.ScheduleId, decisions[1].Schedule.ScheduleId);
+        Assert.Equal(ScheduleDueState.InvalidExpression, decisions[1].State);
+        Assert.Equal(third.ScheduleId, decisions[2].Schedule.ScheduleId);
+        Assert.Equal(ScheduleDueState.NotDue, decisions[2].State);
+    }
+}
+
 public class FindingDeduplicatorTests
 {
     private static Finding MakeFinding(string target, string resource, string findingClass, Severity severity = Severity.Low)

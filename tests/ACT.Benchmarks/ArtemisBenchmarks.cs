@@ -1,10 +1,10 @@
 
 using System.Net;
-using BenchmarkDotNet.Attributes;
 using ACT.Contracts;
 using ACT.Network;
 using ACT.Reporting;
 using ACT.Scope;
+using BenchmarkDotNet.Attributes;
 
 namespace ACT.Benchmarks;
 

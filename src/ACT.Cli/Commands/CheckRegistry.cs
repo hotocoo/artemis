@@ -1,6 +1,9 @@
 
 using ACT.Api;
 using ACT.Contracts;
+using ACT.DependencyAnalysis;
+using ACT.Evidence;
+using ACT.SourceAnalysis;
 using ACT.Tls.Checks;
 using ACT.Web.Checks;
 
@@ -58,8 +61,23 @@ public static class CheckRegistry
     {
         var samples = new List<ISecurityCheck>();
         samples.AddRange(BuildWebChecks());
+        var evidence = new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard));
+        samples.Add(new SourceAnalysisCheck(evidence));
+        samples.Add(new DependencyAnalysisCheck(DisabledAdvisoryProvider.Instance, evidence));
         return [.. samples.Select(c => c.Metadata)];
     }
+
+    /// <summary>
+    /// Network-free checks bound to a local repository asset: source-rule scanning over the
+    /// walked tree and manifest-based dependency auditing. With no feed configured (the
+    /// shipping default) the dependency audit runs against the honest disabled provider, so
+    /// results are reported as inconclusive rather than as a clean bill of health.
+    /// </summary>
+    public static IReadOnlyList<ISecurityCheck> CreateRepositoryChecks(IEvidenceFactory evidence) =>
+    [
+        new SourceAnalysisCheck(evidence),
+        new DependencyAnalysisCheck(DisabledAdvisoryProvider.Instance, evidence)
+    ];
 
     private static List<ISecurityCheck> BuildWebChecks() =>
     [

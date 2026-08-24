@@ -77,7 +77,7 @@ public sealed partial class CacheControlCheck : HttpHeaderCheckBase
             remediation: new RemediationGuidance(
                 "Send no-store on every sensitive response.",
                 ["Emit 'Cache-Control: no-store' (optionally with 'private') on all authenticated and authentication-form responses."],
-                ["OWASP Session Management Cheat Sheet - caching"])));        CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
+                ["OWASP Session Management Cheat Sheet - caching"]))); CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
             EvidenceKind.HttpResponseMetadata, "cache-control", cacheControl ?? "<absent>", response.Correlation);
 
         return Complete(startedUtc, findings, evidence, requestCount: 1);

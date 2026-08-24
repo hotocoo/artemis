@@ -1,18 +1,9 @@
 
 using System.Text.Json;
-using ACT.Api;
-using ACT.Cli.Composition;
 using ACT.Contracts;
-using ACT.Core;
-using ACT.Evidence;
-using ACT.Network;
 using ACT.Persistence;
 using ACT.Policy;
-using ACT.Risk;
-using ACT.Scope;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 
 namespace ACT.Cli;
 
@@ -84,17 +75,8 @@ public static class AssessmentCommands
         var fixturesFile = FlagValue(args, "--fixtures");
 
         var scope = LoadScope(file);
-        var configuration = services.GetRequiredService<IConfiguration>();
-        _ = configuration; // limits already validated at host build
 
-        var compiled = new CompiledScope(scope);
-        var resolver = new PinningDnsResolver();
-        var validator = new ScopeValidator(compiled, resolver);
-        var limiter = new TokenBucketRateLimiter(scope.RequestsPerSecond);
-        var budget = ResourceBudget.FromScope(scope, EngineDefaults.Conservative);
-        var redactor = new StandardEvidenceRedactor(scope.DataRedactionPolicy);
-
-        var baseUrl = ResolveBaseUrl(baseUrlFlag, scope);
+        var baseUrl = AssessmentLauncher.ResolveBaseUrl(baseUrlFlag, scope);
         if (baseUrl is null && scope.TargetType is not TargetTypeKind.LocalSourceRepository)
         {
             Console.Error.WriteLine("error: this scope needs --base-url to identify the HTTP origin to assess.");
@@ -108,64 +90,9 @@ public static class AssessmentCommands
             fixtures.Validate();
         }
 
-        var emergency = services.GetRequiredService<EmergencyStop>();
-        var gate = new PolicyGateAdapter(
-            services.GetRequiredService<IPolicyEvaluator>(), emergency);
-
-        await using var http = new SafeHttpEngine(validator, validator, budget, limiter, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
-        AssessmentContext context = new AssessmentContext(
-            scope.AssessmentId, scope, validator, http, limiter,
-            new EvidenceFactory(redactor), Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance, fixtures, budget,
-            Ledger: new CollectingLedger(), LanguageModel: null)
-        {
-            CancellationToken = CancellationToken.None
-        };
-
-        var assetKind = scope.TargetType is TargetTypeKind.LocalSourceRepository ? AssetKind.Repository : AssetKind.Url;
-        var asset = new AssetRecord(Guid.NewGuid(), scope.AssessmentId, assetKind,
-            assetKind == AssetKind.Repository ? "repository" : baseUrl!.Host,
-            assetKind == AssetKind.Repository
-                ? compiled.AllowMatchers.OfType<LocalRepositoryMatcher>().FirstOrDefault()?.RootPath ?? ""
-                : baseUrl!.ToString(),
-            [], DateTimeOffset.UtcNow, WithinScope: true);
-        await context.Ledger.RecordAssetAsync(asset, CancellationToken.None);
-
-        var contexts = new List<SecurityCheckContext>
-        {
-            new(context, asset, Service: null, BaseUrl: baseUrl)
-        };
-
-        var checks = new List<ISecurityCheck>();
-        if (baseUrl is not null)
-        {
-            checks.AddRange(CheckRegistry.CreateTargetedChecks(baseUrl));
-            checks.Add(new ApiBehavioralCheck());
-            if (fixtures.Expectations.Count > 0)
-            {
-                contexts[0] = contexts[0] with { BaseUrl = baseUrl };
-            }
-        }
-
-        var correlation = CorrelationId.New();
-
-        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(CancellationToken.None);
-        var watcher = WatchEmergencyFlag(services, linkedCts, linkedCts.Token);
-        context = context with { CancellationToken = linkedCts.Token };
-
-        var engine = services.GetRequiredService<AssessmentEngine>();
-        AssessmentRunSummary summary;
-        try
-        {
-            summary = await engine.RunAsync(new AssessmentRunRequest(
-                scope.AssessmentId, correlation, scope, budget,
-                checks, contexts, PreexistingFindings: null,
-                Scorer: new DeterministicFindingScorer()), linkedCts.Token);
-        }
-        finally
-        {
-            linkedCts.Cancel();
-            try { await watcher; } catch (OperationCanceledException) { }
-        }
+        // The launch path is shared verbatim with scheduled executions so both entries get
+        // identical authorization, budgeting, and audit behavior by construction.
+        var summary = await AssessmentLauncher.LaunchAsync(services, scope, baseUrl, fixtures, CancellationToken.None);
 
         return await OutputWriter.WriteAsync(services,
             $"assessment {scope.AssessmentId} completed: {summary.ChecksExecuted} checks executed, " +
@@ -177,24 +104,12 @@ public static class AssessmentCommands
                 checksExecuted = summary.ChecksExecuted,
                 findings = summary.Findings.Select(f => new
                 {
-                    title = f.Title, severity = f.TechnicalSeverity.ToString(),
-                    priority = Math.Round(f.PriorityScore, 1), target = f.TargetDisplay
+                    title = f.Title,
+                    severity = f.TechnicalSeverity.ToString(),
+                    priority = Math.Round(f.PriorityScore, 1),
+                    target = f.TargetDisplay
                 })
             }, JsonOpts.Indented));
-    }
-
-    private static Uri? ResolveBaseUrl(string? explicitFlag, ScopeDefinition scope)
-    {
-        if (explicitFlag is not null) return new Uri(explicitFlag);
-        foreach (var entry in scope.AllowlistedTargets)
-        {
-            if (entry.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                entry.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                return new Uri(entry);
-            }
-        }
-        return null;
     }
 
     /// <summary>
@@ -227,31 +142,6 @@ public static class AssessmentCommands
             JsonSerializer.Serialize(new { emergencyStop = true, reason }));
     }
 
-    /// <summary>Polls the persisted emergency flag and cancels the linked token when armed.</summary>
-    private static async Task WatchEmergencyFlag(IServiceProvider services, CancellationTokenSource linked,
-        CancellationToken external)
-    {
-        var db = services.GetRequiredService<ActDatabase>();
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(external))
-            {
-                if (linked.IsCancellationRequested) return;
-                var flag = await db.GetConfigAsync<EmergencyStopFlag>(EmergencyFlagKey, external);
-                if (flag is not null)
-                {
-                    linked.Cancel();
-                    return;
-                }
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            // External cancellation ends the watcher normally.
-        }
-    }
-
     internal const string EmergencyFlagKey = "emergency-stop";
 
     private static async Task<int> StatusAsync(IServiceProvider services, string[] args)
@@ -273,17 +163,20 @@ public static class AssessmentCommands
             $"{record.Name} [{record.State}] created {record.CreatedUtc:u} completed {record.CompletedUtc?.ToString("u") ?? "-"}",
             JsonSerializer.Serialize(new
             {
-                record.AssessmentId, name = record.Name, state = record.State.ToString(),
-                record.CreatedUtc, record.CompletedUtc,
-                    metrics = metrics == null
+                record.AssessmentId,
+                name = record.Name,
+                state = record.State.ToString(),
+                record.CreatedUtc,
+                record.CompletedUtc,
+                metrics = metrics == null
                     ? null
                     : new
-                      {
-                          requests = metrics.RequestsSent,
-                          checksExecuted = metrics.ChecksExecuted,
-                          checksFailed = metrics.ChecksFailed,
-                          totalDurationMs = metrics.TotalDuration.TotalMilliseconds
-                      }
+                    {
+                        requests = metrics.RequestsSent,
+                        checksExecuted = metrics.ChecksExecuted,
+                        checksFailed = metrics.ChecksFailed,
+                        totalDurationMs = metrics.TotalDuration.TotalMilliseconds
+                    }
             }, JsonOpts.Indented));
     }
 

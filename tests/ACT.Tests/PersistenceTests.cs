@@ -422,7 +422,8 @@ public sealed class PersistenceTests
             foreach (var seed in seeded)
             {
                 await db.UpsertFindingAsync(MakeFinding(assessment.AssessmentId, seed.Class, seed.Severity)
-                    with { Status = seed.Status, PriorityScore = seed.Priority });
+                    with
+                { Status = seed.Status, PriorityScore = seed.Priority });
             }
 
             var checkStatuses = new[]
@@ -571,6 +572,37 @@ public sealed class PersistenceTests
 
             await Assert.ThrowsAsync<ActException>(() =>
                 db.MarkScheduleRanAsync(Guid.NewGuid(), DateTimeOffset.UtcNow));
+        }
+    }
+
+    [Fact]
+    public async Task Persist_GetScheduleAndListAllIncludeDisabledRows()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var scopeId = Guid.NewGuid();
+            var enabled = new ScheduleDefinition(
+                ScheduleId: Guid.NewGuid(), Name: "active", ScopeId: scopeId,
+                CronExpression: "*/15 * * * *", Trigger: ScheduleTriggerKind.Scheduled,
+                Enabled: true, CreatedUtc: DateTimeOffset.UtcNow, LastRunUtc: null);
+            var disabled = new ScheduleDefinition(
+                ScheduleId: Guid.NewGuid(), Name: "paused", ScopeId: scopeId,
+                CronExpression: "0 3 * * *", Trigger: ScheduleTriggerKind.Manual,
+                Enabled: false, CreatedUtc: DateTimeOffset.UtcNow, LastRunUtc: null);
+            await db.SaveScheduleAsync(enabled);
+            await db.SaveScheduleAsync(disabled);
+
+            var all = await db.ListAllSchedulesAsync();
+            Assert.Equal(2, all.Count);
+            Assert.Contains(all, s => s.ScheduleId == disabled.ScheduleId && !s.Enabled);
+
+            var fetched = await db.GetScheduleAsync(disabled.ScheduleId);
+            Assert.NotNull(fetched);
+            Assert.Equal("paused", fetched!.Name);
+            Assert.Equal(ScheduleTriggerKind.Manual, fetched.Trigger);
+            Assert.Null(await db.GetScheduleAsync(Guid.NewGuid()));
         }
     }
 
