@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ACT.Scope/ACT.Scope.csproj" />
+    <ProjectReference Include="../../src/ACT.Core/ACT.Core.csproj" />
+    <ProjectReference Include="../../src/ACT.Reporting/ACT.Reporting.csproj" />
+    <ProjectReference Include="../../src/ACT.SourceAnalysis/ACT.SourceAnalysis.csproj" />
+    <ProjectReference Include="../../src/ACT.Network/ACT.Network.csproj" />
+  </ItemGroup>
+</Project>

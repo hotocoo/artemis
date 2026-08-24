@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>artemis</AssemblyName>
+    <RootNamespace>ACT.Cli</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ACT.Contracts/ACT.Contracts.csproj" />
+    <ProjectReference Include="../ACT.Scope/ACT.Scope.csproj" />
+    <ProjectReference Include="../ACT.Policy/ACT.Policy.csproj" />
+    <ProjectReference Include="../ACT.Risk/ACT.Risk.csproj" />
+    <ProjectReference Include="../ACT.Evidence/ACT.Evidence.csproj" />
+    <ProjectReference Include="../ACT.Core/ACT.Core.csproj" />
+    <ProjectReference Include="../ACT.Network/ACT.Network.csproj" />
+    <ProjectReference Include="../ACT.Tls/ACT.Tls.csproj" />
+    <ProjectReference Include="../ACT.Web/ACT.Web.csproj" />
+    <ProjectReference Include="../ACT.Api/ACT.Api.csproj" />
+    <ProjectReference Include="../ACT.SourceAnalysis/ACT.SourceAnalysis.csproj" />
+    <ProjectReference Include="../ACT.DependencyAnalysis/ACT.DependencyAnalysis.csproj" />
+    <ProjectReference Include="../ACT.Persistence/ACT.Persistence.csproj" />
+    <ProjectReference Include="../ACT.Reporting/ACT.Reporting.csproj" />
+    <ProjectReference Include="../ACT.Llm/ACT.Llm.csproj" />
+  </ItemGroup>
+</Project>
