@@ -28,7 +28,7 @@ public sealed class ServiceDiscoveryCheck : ISecurityCheck
         RequiredPermissions: PermissionRequirement.OutboundNetworkToLocalTargets,
         RequiredProtocols: new HashSet<ProtocolKind>([ProtocolKind.Tcp]),
         SupportedTargetTypes: new HashSet<TargetTypeKind>(
-            [TargetTypeKind.Host, TargetTypeKind.TestEnvironment, TargetTypeKind.LocalContainer]),
+            [TargetTypeKind.Hostname, TargetTypeKind.TestEnvironment, TargetTypeKind.LocalContainer]),
         NetworkBehavior: new NetworkBehaviorProfile(1, 1, OpensConnections: true, SendsAuthenticationHeaders: false, MutatesTargetState: false),
         EvidenceTypesProduced: [EvidenceKind.NetworkObservation],
         SupportsRemediation: false,
@@ -141,15 +141,15 @@ public sealed class ServiceDiscoveryCheck : ISecurityCheck
                             " announced the '" + keyword + "' application protocol while serving plaintext traffic.",
                         Severity.Medium,
                         ConfidenceLevel.High,
-                        ExploitabilityIndicator: false,
-                        BusinessImpactLevel.Limited,
-                        WhyItMatters:
+                        exploitabilityIndicator: false,
+                        businessImpact: BusinessImpactLevel.Limited,
+                        whyItMatters:
                             "Cleartext protocols expose credentials, session content, and server metadata to anyone able to observe the network path.",
-                        TechnicalExplanation:
+                        technicalExplanation:
                             "The service banner on port " +
                                 port.ToString(System.Globalization.CultureInfo.InvariantCulture) +
                                 " matched the '" + keyword + "' protocol signature and the connection carried no TLS protection.",
-                        Remediation: new RemediationGuidance(
+                        remediation: new RemediationGuidance(
                             "Replace the cleartext protocol with a TLS-protected equivalent or isolate it from untrusted networks.",
                             [
                                 "Enable the protocol's native TLS mode or wrap it behind an authenticated tunnel.",
@@ -157,9 +157,9 @@ public sealed class ServiceDiscoveryCheck : ISecurityCheck
                                 "Verify that operational clients connect with TLS enforced."
                             ],
                             ["RFC 9325"]),
-                        FingerprintComponents: new FingerprintComponents(
+                        fingerprintComponents: new FingerprintComponents(
                             s_metadata.Id, host, "port:" + port.ToString(System.Globalization.CultureInfo.InvariantCulture), "cleartext-protocol-banner"),
-                        AssetReference: context.Asset.CanonicalTarget);
+                        assetReference: context.Asset.CanonicalTarget);
                     findings.Add(finding);
                     evidence.Add(context.Assessment.Evidence.Create(
                         finding.FindingId,

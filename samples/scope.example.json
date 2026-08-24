@@ -1,0 +1,21 @@
+{
+  "scopeId": "11111111-2222-3333-4444-555555555555",
+  "assessmentId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "operatorIdentity": "jane.operator (security team)",
+  "organization": "Example Corp Internal Security",
+  "targetType": "Localhost",
+  "allowlistedTargets": ["localhost"],
+  "excludedTargets": [],
+  "permittedProtocols": ["Tcp", "Http", "Https"],
+  "permittedPorts": ["8080", "47390"],
+  "requestsPerSecond": 5,
+  "concurrencyLimit": 2,
+  "maxRuntimeSeconds": 1800,
+  "maxRequests": 2000,
+  "allowedCategories": ["Network", "Tls", "Http", "Api", "Authorization"],
+  "prohibitedCategories": [],
+  "emergencyStopEnabled": true,
+  "evidenceRetentionDays": 30,
+  "redactionPolicy": "Standard",
+  "authorizationStatement": "I confirm I own and am authorized to assess these targets."
+}

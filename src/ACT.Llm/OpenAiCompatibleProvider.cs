@@ -98,8 +98,9 @@ public sealed class OpenAiCompatibleProvider : ILanguageModelProvider, IDisposab
             problems.Add("LlmProviderKind.Disabled cannot drive this provider; use DisabledLanguageModelProvider.");
         }
 
-        if (!Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var endpoint) ||
-            endpoint.Scheme is not (Uri.UriSchemeHttp or Uri.UriSchemeHttps))
+        var endpointUsable = Uri.TryCreate(options.Endpoint, UriKind.Absolute, out var endpoint) &&
+                             (endpoint.Scheme == Uri.UriSchemeHttp || endpoint.Scheme == Uri.UriSchemeHttps);
+        if (!endpointUsable)
         {
             problems.Add("Llm.Endpoint must be an absolute http(s) URI when a provider kind is enabled.");
         }

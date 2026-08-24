@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore Artemis.slnx
+      - name: Build (warnings are errors)
+        run: dotnet build Artemis.slnx --no-restore -c Release
+      - name: Unit tests
+        run: dotnet test tests/ACT.Tests/ACT.Tests.csproj --no-build -c Release
+      - name: Integration tests (lab fixtures, loopback only)
+        run: dotnet test tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj --no-build -c Release
+      - name: Safety tests (fail-closed invariants)
+        run: dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj --no-build -c Release
+
+  format-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Verify formatting
+        run: dotnet format Artemis.slnx --verify-no-changes
+
+  forbidden-patterns:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan for prohibited markers in product code
+        shell: bash
+        run: |
+          set -e
+          if grep -RInE "TODO|FIXME|HACK\b|NotImplementedException" src --include="*.cs"; then
+            echo "::error::Prohibited markers found in product code"
+            exit 1
+          fi
