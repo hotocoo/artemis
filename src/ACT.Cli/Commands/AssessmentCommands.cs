@@ -23,6 +23,7 @@ public static class AssessmentCommands
             "start" => await StartAsync(services, args[1..]),
             "status" => await StatusAsync(services, args[1..]),
             "stop" => await StopAsync(services, args[1..]),
+            "disarm" => await DisarmAsync(services, args[1..]),
             _ => Usage()
         };
 
@@ -32,6 +33,7 @@ public static class AssessmentCommands
             Console.Error.WriteLine("       artemis assessment start --scope FILE [--base-url URL] [--fixtures FILE]");
             Console.Error.WriteLine("       artemis assessment status ASSESSMENT_ID");
             Console.Error.WriteLine("       artemis assessment stop --emergency REASON");
+            Console.Error.WriteLine("       artemis assessment disarm --reason REASON");
             return ExitCodes.UsageError;
         }
     }
@@ -142,7 +144,47 @@ public static class AssessmentCommands
             JsonSerializer.Serialize(new { emergencyStop = true, reason }));
     }
 
-    internal const string EmergencyFlagKey = "emergency-stop";
+    /// <summary>
+    /// The explicit operator action that ends an emergency stop. Clears BOTH denial surfaces -
+    /// the persisted flag every process polls and this process's latch - and records the disarm
+    /// in the hash-chained audit log. Disarming without an armed stop fails closed: a 'success'
+    /// there would more likely signal a confused operator than a real state change.
+    /// </summary>
+    private static async Task<int> DisarmAsync(IServiceProvider services, string[] args)
+    {
+        var reasonIndex = Array.FindIndex(args, a => a == "--reason");
+        if (reasonIndex < 0 || reasonIndex + 1 >= args.Length)
+        {
+            Console.Error.WriteLine("error: assessment disarm requires --reason REASON");
+            Console.Error.WriteLine("       artemis assessment disarm --reason REASON");
+            return ExitCodes.UsageError;
+        }
+        var reason = args[reasonIndex + 1];
+
+        var db = services.GetRequiredService<ActDatabase>();
+        await db.InitializeAsync();
+        var existing = await db.GetConfigAsync<EmergencyStopFlag>(EmergencyFlagKey);
+        if (existing is null)
+        {
+            Console.Error.WriteLine("error: no emergency stop is armed; nothing to disarm");
+            return ExitCodes.RuntimeFailure;
+        }
+
+        var removed = await db.ClearConfigAsync(EmergencyFlagKey);
+        services.GetRequiredService<EmergencyStop>().Disarm("operator-cli");
+
+        static string Truncate(string value) => value[..Math.Min(120, value.Length)];
+        await db.AppendAuditAsync(new AuditDraft(
+            "operator", "assessment.emergency_stop_disarmed", "configuration", EmergencyFlagKey,
+            $"armed {existing.ArmedUtc:u} ({Truncate(existing.Reason)}) disarmed: {Truncate(reason)}",
+            CorrelationId.New()));
+
+        return await OutputWriter.WriteAsync(services,
+            "EMERGENCY STOP disarmed" + (removed ? "" : " (flag was already absent)") + ": " + reason,
+            JsonSerializer.Serialize(new { emergencyStop = false, reason }));
+    }
+
+    public const string EmergencyFlagKey = "emergency-stop";
 
     private static async Task<int> StatusAsync(IServiceProvider services, string[] args)
     {

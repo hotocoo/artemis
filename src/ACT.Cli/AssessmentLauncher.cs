@@ -19,7 +19,7 @@ namespace ACT.Cli;
 /// interactive 'assessment start' command and scheduled executions launch through here, so every
 /// entry point inherits identical authorization, budget, and audit behavior by construction.
 /// </summary>
-internal static class AssessmentLauncher
+public static class AssessmentLauncher
 {
     /// <summary>
     /// Resolves the HTTP origin to assess: an explicit override wins; otherwise the first
@@ -84,6 +84,21 @@ internal static class AssessmentLauncher
         var redactor = new StandardEvidenceRedactor(scope.DataRedactionPolicy);
 
         var emergency = services.GetRequiredService<EmergencyStop>();
+
+        // Deny NEW launches before any work, not two seconds in via the watcher: an operator's
+        // stop is in force until explicitly disarmed, and starting work it must immediately
+        // cancel would be dishonest about what ran.
+        var db = services.GetRequiredService<ActDatabase>();
+        var persistedStop = await db.GetConfigAsync<EmergencyStopFlag>(
+            AssessmentCommands.EmergencyFlagKey, externalToken);
+        if (emergency.IsArmed || persistedStop is not null)
+        {
+            throw ActException.FailClosed(ErrorCategory.Authorization,
+                "The emergency stop is armed; assessments are denied until an operator disarms it.",
+                "Launch refused while the emergency stop is in force"
+                + (persistedStop is { } flag ? " (armed " + flag.ArmedUtc + ": " + flag.Reason + ")" : "") + ".");
+        }
+
         var gate = new PolicyGateAdapter(
             services.GetRequiredService<IPolicyEvaluator>(), emergency);
 

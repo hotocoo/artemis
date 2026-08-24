@@ -62,7 +62,7 @@ public static class HelpPrinter
         "config" => "show the effective, redacted configuration",
         "scope" => "validate and list assessment scopes",
         "doctor" => "environment health: db, audit chain, feeds, filesystem, network",
-        "assessment" => "create | start | status | stop assessments",
+        "assessment" => "create, start, status, emergency stop and disarm assessments",
         "check" => "list built-in security checks",
         "finding" => "list and show stored findings",
         "report" => "generate JSON/CSV/Markdown/HTML/SARIF reports",

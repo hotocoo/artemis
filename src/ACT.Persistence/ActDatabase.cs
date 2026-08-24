@@ -876,6 +876,19 @@ public sealed partial class ActDatabase : IAsyncDisposable
         }, cancellationToken);
     }
 
+    /// <summary>Removes one configuration value. Returns true when a stored value was deleted.</summary>
+    public Task<bool> ClearConfigAsync(string key, CancellationToken cancellationToken = default)
+    {
+        ValidateConfigKey(key);
+        return WriteAsync(async (connection, transaction, token) =>
+        {
+            await using var command = Command(connection, transaction,
+                "DELETE FROM configurations WHERE key = $key");
+            command.Parameters.AddWithValue("$key", key);
+            return await command.ExecuteNonQueryAsync(token).ConfigureAwait(false) > 0;
+        }, cancellationToken);
+    }
+
     private static void ValidateConfigKey(string key)
     {
         if (string.IsNullOrWhiteSpace(key) || key.Length > 512)
