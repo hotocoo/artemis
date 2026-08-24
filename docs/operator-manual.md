@@ -78,4 +78,10 @@ Execution model:
 
 ## 8. Emergency procedures
 
-Console button or `artemis assessment stop --emergency`: arms the latch, cancels all in-flight cancellable work, denies all new check execution until explicitly disarmed by an operator.
+Console button or `artemis assessment stop --emergency`: arms the latch, cancels all in-flight cancellable work (engines poll the persisted flag every two seconds), and denies all new check execution until explicitly disarmed by an operator. The stop lives on two surfaces by design - the running host's in-process latch AND a persisted flag in the database - so a stop armed from one process is honored by every other process sharing that database.
+
+Disarming is always an explicit, audited operator action; nothing disarms itself:
+
+`artemis assessment disarm --reason "incident closed"`
+
+or the **Disarm emergency stop** button on the console dashboard while a stop is armed. Disarm clears both surfaces, records who disarmed and why in the hash-chained audit log next to the original arm event, and fails closed if no stop is armed. While armed: new launches are refused before any work, due schedules are skipped honestly and remain due, automatic retention sweeps pause so evidence outlives the incident, and the dashboard banner names every surface still holding the stop.

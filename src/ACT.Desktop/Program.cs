@@ -44,6 +44,9 @@ await database.InitializeAsync(CancellationToken.None);
 var latch = provider.GetRequiredService<ACT.Policy.EmergencyStop>();
 ArtemisRuntime.BindEmergencyStop(reason => latch.Arm(reason));
 
+// Console-initiated disarms reset the host-wide policy latch as well as the process-local view.
+provider.GetRequiredService<EmergencyStopProxy>().RegisterDisarmHook(() => latch.Disarm("operator-console"));
+
 var port = actOptions.Ui.ConsolePort;
 var url = "http://127.0.0.1:" + port;
 Environment.SetEnvironmentVariable("ASPNETCORE_URLS", url);
@@ -77,6 +80,7 @@ app.MapGet("/schedules", async (IServiceProvider sp) => Pages.Schedules(sp));
 app.MapGet("/config", (IServiceProvider sp) => Pages.Config(sp));
 app.MapGet("/health", async (IServiceProvider sp) => await Pages.Health(sp));
 app.MapPost("/emergency-stop", async (IServiceProvider sp) => await Pages.EmergencyStop(sp));
+app.MapPost("/emergency-disarm", async (IServiceProvider sp) => await Pages.EmergencyStopDisarm(sp));
 
 app.Run();
 return ExitCodes.Ok;
@@ -93,12 +97,36 @@ internal static class Pages
         var snapshot = await db.DashboardAsync();
         var emergency = sp.GetRequiredService<EmergencyStopProxy>().Snapshot();
 
+        // The stop lives on two surfaces by design: this process's latch AND the persisted flag
+        // another process may have set via 'artemis assessment stop'. The banner reflects both,
+        // so a stop armed from the CLI is visible here instead of silently denying schedules.
+        var persistedStop = await db.GetConfigAsync<EmergencyStopFlag>(
+            AssessmentCommands.EmergencyFlagKey);
+        var anyArmed = emergency.Armed || persistedStop is not null;
+
         var body = new StringBuilder();
         body.Append("<h1>Dashboard</h1>");
-        if (emergency.Armed)
+        if (anyArmed)
         {
-            body.Append($"<p><strong style=\"color:#b71c1c\">EMERGENCY STOP ARMED</strong> - reason: {Esc(emergency.Reason)}</p>");
+            var sources = new List<string>();
+            if (emergency.Armed) sources.Add("console (reason: " + Esc(emergency.Reason) + ")");
+            if (persistedStop is { } flag)
+            {
+                sources.Add("persisted flag, armed " + Esc(flag.ArmedUtc.ToString("u"))
+                    + " (reason: " + Esc(flag.Reason) + ")");
+            }
+
+            body.Append("<p><strong style=\"color:#b71c1c\">EMERGENCY STOP ARMED</strong> - "
+                + string.Join("; ", sources) + "</p>");
+            body.Append("<form class=\"inline\" method=\"post\" action=\"/emergency-disarm\">");
+            body.Append("<button type=\"submit\">Disarm emergency stop</button></form>");
         }
+        else
+        {
+            body.Append("<form class=\"inline\" method=\"post\" action=\"/emergency-stop\">");
+            body.Append("<button class=\"danger\" type=\"submit\">Activate emergency stop</button></form>");
+        }
+
         body.Append("<div class=\"cards\">");
         foreach (var (label, value) in new[]
                  {
@@ -114,8 +142,6 @@ internal static class Pages
             body.Append($"<div class=\"card\"><b>{Esc(value)}</b>{Esc(label)}</div>");
         }
         body.Append("</div>");
-        body.Append("<form class=\"inline\" method=\"post\" action=\"/emergency-stop\">");
-        body.Append("<button class=\"danger\" type=\"submit\">Activate emergency stop</button></form>");
         body.Append($"<p style=\"margin-top:1rem;color:#667\">Computed {Esc(snapshot.ComputedUtc.ToString("u"))} from persisted rows.</p>");
         return Results.Content(ArtemisConsoleLayout.Render("Dashboard", "Dashboard", body.ToString()), "text/html");
     }
@@ -300,11 +326,37 @@ internal static class Pages
         sp.GetRequiredService<EmergencyStopProxy>().Arm("operator-console", "Emergency stop activated from web console.");
         return Task.FromResult<IResult>(Results.Redirect("/", permanent: false));
     }
+
+    /// <summary>
+    /// Ends an emergency stop from the console: clears the persisted flag other processes poll,
+    /// disarms this host's latches, and records both in the hash-chained audit log.
+    /// </summary>
+    public static async Task<IResult> EmergencyStopDisarm(IServiceProvider sp)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+        var existing = await db.GetConfigAsync<EmergencyStopFlag>(
+            AssessmentCommands.EmergencyFlagKey);
+        if (existing is not null)
+        {
+            await db.ClearConfigAsync(AssessmentCommands.EmergencyFlagKey);
+            await db.AppendAuditAsync(new AuditDraft(
+                Actor: "operator-console",
+                Action: "assessment.emergency_stop_disarmed",
+                ObjectType: "configuration",
+                ObjectId: AssessmentCommands.EmergencyFlagKey,
+                Result: $"armed {existing.ArmedUtc:u} ({existing.Reason}) disarmed via console",
+                Correlation: CorrelationId.New()));
+        }
+
+        sp.GetRequiredService<EmergencyStopProxy>().Disarm();
+        return Results.Redirect("/", permanent: false);
+    }
 }
 
 /// <summary>Bridges console-initiated stops to the host-wide policy latch.</summary>
 public sealed class EmergencyStopProxy
 {
+    private Action? _disarmHook;
     public bool Armed { get; private set; }
     public string Reason { get; private set; } = "";
 
@@ -313,6 +365,17 @@ public sealed class EmergencyStopProxy
         Armed = true;
         Reason = reason;
         ArtemisRuntime.RaiseEmergencyStop(reason);
+    }
+
+    /// <summary>Registers the callback that resets the host-wide policy latch on console disarm.</summary>
+    public void RegisterDisarmHook(Action hook) => _disarmHook = hook;
+
+    /// <summary>Resets the process-local armed view and invokes the registered latch reset.</summary>
+    public void Disarm()
+    {
+        Armed = false;
+        Reason = "";
+        _disarmHook?.Invoke();
     }
 
     public EmergencyStopSnapshot Snapshot() => new(Armed, Reason, "console");
