@@ -389,9 +389,14 @@ public sealed partial class ActDatabase : IAsyncDisposable
         return WriteAsync(async (connection, transaction, token) =>
         {
             await InsertAssessmentAsync(connection, transaction, assessment, token).ConfigureAwait(false);
+            // Scheduled fires reuse one frozen scope id across fresh assessment ids; the scope row
+            // must upsert (not insert) or every second fire of a schedule fails on the primary key.
             await using var command = Command(connection, transaction, """
                 INSERT INTO scopes(scope_id, assessment_id, definition_json)
                 VALUES($scope_id, $assessment_id, $definition_json)
+                ON CONFLICT(scope_id) DO UPDATE SET
+                    assessment_id = $assessment_id,
+                    definition_json = $definition_json
                 """);
             command.Parameters.AddWithValue("$scope_id", scope.ScopeId.ToString());
             command.Parameters.AddWithValue("$assessment_id", assessment.AssessmentId.ToString());

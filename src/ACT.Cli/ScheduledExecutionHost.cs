@@ -27,7 +27,10 @@ public enum ScheduledRunState
     ScopeRejected,
 
     /// <summary>The launch failed after starting; details live in the audit log.</summary>
-    ExecutionFailed
+    ExecutionFailed,
+
+    /// <summary>Post-tick retention maintenance itself failed; schedules were unaffected.</summary>
+    MaintenanceFailed
 }
 
 /// <summary>One schedule's tick result for human and JSON output.</summary>
@@ -116,6 +119,24 @@ public static class ScheduledExecutionHost
                     outcomes.Add(await ExecuteAsync(services, db, decision.Schedule, cancellationToken));
                     break;
             }
+        }
+
+        // Ticks carry evidence-retention maintenance so a ticking host honors every scope's
+        // configured window without operator action. Throttled internally; skipped honestly while
+        // an emergency stop is armed. A maintenance failure must not kill the tick itself.
+        try
+        {
+            await RetentionMaintenance.MaybeSweepAsync(services, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            outcomes.Add(new ScheduledRunOutcome(
+                Guid.Empty, "retention-maintenance", ScheduledRunState.MaintenanceFailed,
+                null, 0, 0, ex.GetType().Name + ": " + ex.Message));
         }
 
         return outcomes;

@@ -514,6 +514,85 @@ public sealed partial class ActDatabase
 
     // ---------- retention internals ----------
 
+    /// <summary>
+    /// Lists every stored scope definition, one row per scope id. The scope_id column is the
+    /// authority: a stored definition whose JSON disagrees with its column fails closed.
+    /// </summary>
+    public Task<IReadOnlyList<ScopeDefinition>> ListScopeDefinitionsAsync(CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            command.CommandText = "SELECT scope_id, definition_json FROM scopes ORDER BY scope_id";
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var scopes = new List<ScopeDefinition>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                var storedId = reader.GuidOf("scope_id");
+                var definition = ActJson.Deserialize<ScopeDefinition>(reader.Str("definition_json"), "scopes.definition_json");
+                if (definition.ScopeId != storedId)
+                {
+                    throw ActException.FailClosed(ErrorCategory.Persistence,
+                        "The stored scope definition does not match its record.",
+                        $"Scope row {storedId} carries definition {definition.ScopeId}.");
+                }
+
+                scopes.Add(definition);
+            }
+
+            return (IReadOnlyList<ScopeDefinition>)scopes;
+        }, cancellationToken);
+
+    /// <summary>Counts evidence rows of one scope captured strictly before the cutoff.</summary>
+    public Task<long> CountExpiredEvidenceAsync(
+        Guid scopeId, DateTimeOffset cutoffUtc, CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            command.CommandText = """
+                SELECT COUNT(*) AS expired
+                FROM evidence e
+                JOIN findings f ON f.finding_id = e.finding_id
+                JOIN assessments a ON a.assessment_id = f.assessment_id
+                WHERE a.scope_id = $scope AND e.captured_utc < $cutoff
+                """;
+            command.Parameters.AddWithValue("$scope", scopeId.ToString());
+            command.Parameters.AddWithValue("$cutoff", Db(cutoffUtc));
+            var raw = await command.ExecuteScalarAsync(token).ConfigureAwait(false);
+            return Convert.ToInt64(raw, System.Globalization.CultureInfo.InvariantCulture);
+        }, cancellationToken);
+
+    /// <summary>
+    /// Deletes, in ONE transaction, every evidence row that each scope's own cutoff expires.
+    /// Evidence exactly at its boundary is retained; only strictly older rows are removed.
+    /// Returns one deleted-row count per entry, in entry order.
+    /// </summary>
+    public Task<IReadOnlyList<long>> DeleteExpiredEvidenceForScopesAsync(
+        IReadOnlyList<(Guid ScopeId, DateTimeOffset CutoffUtc)> entries,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        return WriteAsync(async (connection, transaction, token) =>
+        {
+            const string sql = """
+                DELETE FROM evidence
+                WHERE evidence_id IN (
+                    SELECT e.evidence_id
+                    FROM evidence e
+                    JOIN findings f ON f.finding_id = e.finding_id
+                    JOIN assessments a ON a.assessment_id = f.assessment_id
+                    WHERE a.scope_id = $scope AND e.captured_utc < $cutoff)
+                """;
+            var deletedCounts = new List<long>(entries.Count);
+            foreach (var (scopeId, cutoffUtc) in entries)
+            {
+                await using var command = Command(connection, transaction, sql);
+                command.Parameters.AddWithValue("$scope", scopeId.ToString());
+                command.Parameters.AddWithValue("$cutoff", Db(cutoffUtc));
+                deletedCounts.Add(await command.ExecuteNonQueryAsync(token).ConfigureAwait(false));
+            }
+
+            return (IReadOnlyList<long>)deletedCounts;
+        }, cancellationToken);
+    }
+
     internal async Task<long> DeleteEvidenceCoreAsync(TimeSpan age, bool secureWipe, CancellationToken cancellationToken)
     {
         ThrowIfUnready();

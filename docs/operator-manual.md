@@ -41,7 +41,15 @@ During a run: every request passes rate limiting, scope verdicts, pinned DNS con
 
 ## 5. Evidence, redaction, retention
 
-Evidence is redacted at creation (Authorization/Cookie headers, tokens, keys; strict mode available). Retention sweeps delete evidence older than the configured window; audit entries form a SHA-256 hash chain you can verify at any time.
+Evidence is redacted at creation (Authorization/Cookie headers, tokens, keys; strict mode available). Each scope's own `evidenceRetentionDays` governs how long that scope's evidence survives; audit entries form a SHA-256 hash chain you can verify at any time.
+
+Sweeping:
+
+- `artemis retention status` - per-scope outlook: configured window, the cutoff it implies now, and how many evidence rows already outlived it.
+- `artemis retention sweep --dry-run` - exactly what a sweep would remove, without removing it.
+- `artemis retention sweep [--secure]` - removes every row strictly older than its scope's window in one transaction (evidence exactly at the boundary is retained), then appends an audited `evidence.retention_swept` event to the hash chain even when nothing was deleted. `--secure` additionally truncates the write-ahead log so freed pages stop surviving in sidecar journals.
+
+While a console host or external ticks drive schedules, retention maintenance runs automatically - throttled to at most one automatic sweep per database per 24 hours, stamping its run without auditing quiet no-op passes. **Automatic sweeps are skipped outright while an emergency stop is armed** (in-process latch or persisted flag): an incident may be in progress and evidence must outlive it; they resume after disarming. Manual CLI sweeps are never throttled or blocked because explicit operator intent is their own authorization.
 
 ## 6. Advisory feeds
 
@@ -66,6 +74,7 @@ Execution model:
 - While an emergency stop is armed, due schedules are skipped honestly (audited, left still due) and execute after disarming.
 - Local repository scopes run the network-free source and dependency analyses; with no advisory feed configured, dependency severities are reported as **inconclusive**, never as clean.
 - Every lifecycle event lands in the hash-chained audit log: created, enabled/disabled, run started/completed/failed, skipped for emergency stop.
+- Ticks also carry throttled evidence-retention maintenance (section 5), skipped while an emergency stop is armed.
 
 ## 8. Emergency procedures
 

@@ -14,7 +14,7 @@ public sealed class PersistenceTests
 
     private static async Task<PersistFixture> CreateDatabaseAsync() => await PersistFixture.CreateAsync();
 
-    private static ScopeDefinition MakeScope(Guid scopeId, Guid assessmentId) => new(
+    private static ScopeDefinition MakeScope(Guid scopeId, Guid assessmentId, TimeSpan? retention = null) => new(
         ScopeId: scopeId,
         AssessmentId: assessmentId,
         OperatorIdentity: "unit-test-operator",
@@ -31,7 +31,7 @@ public sealed class PersistenceTests
         AllowedCategories: Enum.GetValues<CheckCategory>(),
         ProhibitedCategories: [],
         EmergencyStopEnabled: true,
-        EvidenceRetentionPeriod: TimeSpan.FromDays(30),
+        EvidenceRetentionPeriod: retention ?? TimeSpan.FromDays(30),
         DataRedactionPolicy: RedactionPolicy.Standard,
         AuthorizationStatement: "I am authorized to assess these targets.");
 
@@ -47,12 +47,13 @@ public sealed class PersistenceTests
         Organization: "unit-test-org");
 
     /// <summary>Creates one assessment together with its matching scope definition.</summary>
-    private static async Task<AssessmentRecord> CreatePairedAsync(ActDatabase db, string name = "assessment")
+    private static async Task<AssessmentRecord> CreatePairedAsync(
+        ActDatabase db, string name = "assessment", TimeSpan? retention = null)
     {
         var assessmentId = Guid.NewGuid();
         var scopeId = Guid.NewGuid();
         var assessment = MakeAssessment(name) with { AssessmentId = assessmentId, ScopeId = scopeId };
-        await db.CreateAssessmentAsync(assessment, MakeScope(scopeId, assessmentId));
+        await db.CreateAssessmentAsync(assessment, MakeScope(scopeId, assessmentId, retention));
         return assessment;
     }
 
@@ -313,6 +314,147 @@ public sealed class PersistenceTests
             Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM evidence"));
         }
     }
+
+    [Fact]
+    public async Task Persist_RepeatedAssessmentOnSameScopeUpsertsScopeRow()
+    {
+        // Scheduled fires reuse ONE frozen scope id across fresh assessment ids; the scopes table
+        // keys on scope_id, so a plain insert would make every second fire fail closed.
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var first = await CreatePairedAsync(db, "first-fire");
+
+            var secondId = Guid.NewGuid();
+            var second = MakeAssessment("second-fire") with { AssessmentId = secondId, ScopeId = first.ScopeId };
+            var scopeSnapshot = MakeScope(first.ScopeId, secondId) with { AssessmentId = secondId };
+            await db.CreateAssessmentAsync(second, scopeSnapshot);
+
+            Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM scopes"));
+            Assert.Equal(2, await RawCountAsync(fixture, "SELECT COUNT(*) FROM assessments"));
+
+            var definitions = await db.ListScopeDefinitionsAsync();
+            var stored = Assert.Single(definitions);
+            Assert.Equal(first.ScopeId, stored.ScopeId);
+            Assert.Equal(secondId, stored.AssessmentId);
+        }
+    }
+
+    [Fact]
+    public async Task Persist_ListScopeDefinitionsRejectsColumnDefinitionMismatch()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = await CreatePairedAsync(db);
+
+            // Corrupt the stored definition so its scopeId disagrees with the authoritative column.
+            await using (var connection = new SqliteConnection("Data Source=" + fixture.DatabasePath))
+            {
+                await connection.OpenAsync();
+                var read = connection.CreateCommand();
+                read.CommandText = "SELECT definition_json FROM scopes WHERE scope_id = $id";
+                read.Parameters.AddWithValue("$id", assessment.ScopeId.ToString());
+                var raw = (string?)await read.ExecuteScalarAsync();
+                Assert.NotNull(raw);
+
+                var tampered = raw!.Replace(assessment.ScopeId.ToString("D"), Guid.NewGuid().ToString("D"));
+                var write = connection.CreateCommand();
+                write.CommandText = "UPDATE scopes SET definition_json = $json WHERE scope_id = $id";
+                write.Parameters.AddWithValue("$json", tampered);
+                write.Parameters.AddWithValue("$id", assessment.ScopeId.ToString());
+                await write.ExecuteNonQueryAsync();
+            }
+
+            await Assert.ThrowsAsync<ActException>(() => db.ListScopeDefinitionsAsync());
+        }
+    }
+
+    [Fact]
+    public async Task Persist_RetentionPreviewReportsExpiredCountsPerScope()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var shortWindow = await CreatePairedAsync(db, "short", TimeSpan.FromDays(7));
+
+            var finding = MakeFinding(shortWindow.AssessmentId, "preview-class");
+            await db.UpsertFindingAsync(finding);
+            var now = DateTimeOffset.UtcNow;
+            await db.AddEvidenceBatchAsync(
+            [
+                MakeEvidence(finding.FindingId, "expired-a", now.AddDays(-10)),
+                MakeEvidence(finding.FindingId, "inside-window", now.AddDays(-6)),
+                MakeEvidence(finding.FindingId, "fresh", now)
+            ]);
+
+            var preview = await new RetentionSweeper(db).PreviewAsync();
+            var row = Assert.Single(preview);
+            Assert.Equal(shortWindow.ScopeId, row.ScopeId);
+            Assert.Equal(TimeSpan.FromDays(7), row.RetentionPeriod);
+            // Only the strictly-older-than-cutoff item counts; the sweep recomputes its cutoff at
+            // run time, so tests keep a two-day margin instead of probing exact equality.
+            Assert.Equal(1, row.ExpiredCount);
+        }
+    }
+
+    [Fact]
+    public async Task Persist_RetentionSweepHonorsEachScopeConfiguredWindow()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var shortScope = await CreatePairedAsync(db, "short-window", TimeSpan.FromDays(7));
+            var longScope = await CreatePairedAsync(db, "long-window", TimeSpan.FromDays(30));
+
+            var shortFinding = MakeFinding(shortScope.AssessmentId, "short-class");
+            var longFinding = MakeFinding(longScope.AssessmentId, "long-class");
+            await db.UpsertFindingAsync(shortFinding);
+            await db.UpsertFindingAsync(longFinding);
+
+            var now = DateTimeOffset.UtcNow;
+            await db.AddEvidenceBatchAsync(
+            [
+                // Expired under BOTH windows.
+                MakeEvidence(shortFinding.FindingId, "s-ancient", now.AddDays(-40)),
+                MakeEvidence(longFinding.FindingId, "l-ancient", now.AddDays(-40)),
+                // Expired only under the seven-day window; the thirty-day scope keeps it.
+                MakeEvidence(shortFinding.FindingId, "s-middle", now.AddDays(-14)),
+                MakeEvidence(longFinding.FindingId, "l-middle", now.AddDays(-14)),
+                // Fresh under every window.
+                MakeEvidence(shortFinding.FindingId, "s-fresh", now),
+                MakeEvidence(longFinding.FindingId, "l-fresh", now)
+            ]);
+
+            var result = await new RetentionSweeper(db).SweepAsync(secureWipe: false);
+            Assert.Equal(3, result.TotalDeleted);
+            Assert.False(result.SecureWipe);
+
+            var shortDeletion = result.Scopes.Single(scope => scope.ScopeId == shortScope.ScopeId);
+            var longDeletion = result.Scopes.Single(scope => scope.ScopeId == longScope.ScopeId);
+            Assert.Equal(2, shortDeletion.DeletedCount);
+            Assert.Equal(TimeSpan.FromDays(7), shortDeletion.RetentionPeriod);
+            Assert.Equal(1, longDeletion.DeletedCount);
+            Assert.Equal(TimeSpan.FromDays(30), longDeletion.RetentionPeriod);
+
+            Assert.Equal(3, await RawCountAsync(fixture, "SELECT COUNT(*) FROM evidence"));
+            Assert.Equal(0, await RawCountAsync(fixture,
+                "SELECT COUNT(*) FROM evidence WHERE key LIKE 's-%' AND key != 's-fresh'"));
+            Assert.Equal(1, await RawCountAsync(fixture,
+                "SELECT COUNT(*) FROM evidence WHERE key = 'l-middle'"));
+
+            // Idempotent: nothing is left past its window, so a second sweep deletes nothing.
+            var secondPass = await new RetentionSweeper(db).SweepAsync(secureWipe: true);
+            Assert.Equal(0, secondPass.TotalDeleted);
+            Assert.True(secondPass.SecureWipe);
+            Assert.Equal(3, await RawCountAsync(fixture, "SELECT COUNT(*) FROM evidence"));
+        }
+    }
+
 
     // ---------- audit chain ----------
 
