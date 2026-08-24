@@ -19,7 +19,9 @@ internal static class ActJson
         {
             Converters = { new JsonStringEnumConverter() }
         };
-        options.MakeReadOnly();
+        // populateMissingResolver is required: Web defaults bind their resolver lazily and
+        // MakeReadOnly() without it fails closed on first serialization.
+        options.MakeReadOnly(populateMissingResolver: true);
         return options;
     }
 
@@ -62,25 +64,29 @@ internal static class ActTime
 internal static class ActValues
 {
     internal static Guid Guid(string raw, string context) =>
-        Guid.TryParse(raw, out var parsed)
+        System.Guid.TryParse(raw, out var parsed)
             ? parsed
             : throw ActException.FailClosed(ErrorCategory.Persistence,
                 "Stored data could not be read.",
                 "Column '" + context + "': value is not a valid identifier.");
 
     internal static TEnum Enum<TEnum>(string raw, string context) where TEnum : struct, Enum =>
-        Enum.TryParse<TEnum>(raw, ignoreCase: true, out var parsed)
+        System.Enum.TryParse<TEnum>(raw, ignoreCase: true, out var parsed)
             ? parsed
             : throw ActException.FailClosed(ErrorCategory.Persistence,
                 "Stored data could not be read.",
                 "Column '" + context + "': value is not a valid " + typeof(TEnum).Name + ".");
 
-    internal static TEnum Enum<TEnum>(long raw, string context) where TEnum : struct, Enum =>
-        Enum.IsDefined(typeof(TEnum), raw)
-            ? (TEnum)Enum.ToObject(typeof(TEnum), raw)
+    internal static TEnum Enum<TEnum>(long raw, string context) where TEnum : struct, Enum
+    {
+        // Convert to the enum's underlying type first: IsDefined rejects mismatched boxed widths.
+        var converted = System.Enum.ToObject(typeof(TEnum), raw);
+        return System.Enum.IsDefined(typeof(TEnum), converted)
+            ? (TEnum)converted
             : throw ActException.FailClosed(ErrorCategory.Persistence,
                 "Stored data could not be read.",
                 "Column '" + context + "': value " + raw + " is not a defined " + typeof(TEnum).Name + ".");
+    }
 }
 
 /// <summary>Typed accessors for SQLite rows read by column name.</summary>

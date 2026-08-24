@@ -42,9 +42,7 @@ internal static class ReportRendering
         score.ToString("0.###", CultureInfo.InvariantCulture);
 
     internal static string SingleLine(string text) =>
-        text.Replace("
-", " ", StringComparison.Ordinal).Replace('', ' ').Replace('
-', ' ');
+        text.Replace("\r\n", " ", StringComparison.Ordinal).Replace('\r', ' ').Replace('\n', ' ');
 
     internal static string MarkdownSafe(string text) =>
         SingleLine(text).Replace("|", "\\|", StringComparison.Ordinal);

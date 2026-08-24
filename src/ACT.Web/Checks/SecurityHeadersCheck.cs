@@ -75,8 +75,7 @@ public sealed class SecurityHeadersCheck : HttpHeaderCheckBase
                 remediation: new RemediationGuidance(
                     "Send the full baseline of security headers on every response.",
                     ["Add 'X-Content-Type-Options: nosniff'.", "Add a strict 'Referrer-Policy' such as strict-origin-when-cross-origin.", "Add a 'Permissions-Policy' disabling unused powerful features."],
-                    ["OWASP Secure Headers Project"]));
-            CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
+                    ["OWASP Secure Headers Project"])));            CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
                 EvidenceKind.HttpResponseMetadata, "absent_security_headers", string.Join(", ", absent), response.Correlation);
         }
 

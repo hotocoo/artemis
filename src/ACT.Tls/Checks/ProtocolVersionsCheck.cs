@@ -24,7 +24,7 @@ public sealed class ProtocolVersionsCheck : ISecurityCheck
         RequiredPermissions: PermissionRequirement.OutboundNetworkToLocalTargets,
         RequiredProtocols: new HashSet<ProtocolKind>([ProtocolKind.Tls]),
         SupportedTargetTypes: new HashSet<TargetTypeKind>(
-            [TargetTypeKind.Host, TargetTypeKind.TestEnvironment, TargetTypeKind.LocalContainer]),
+            [TargetTypeKind.Hostname, TargetTypeKind.TestEnvironment, TargetTypeKind.LocalContainer]),
         NetworkBehavior: new NetworkBehaviorProfile(1, TlsCheckRuntime.MaxHandshakesPerTarget, OpensConnections: true, SendsAuthenticationHeaders: false, MutatesTargetState: false),
         EvidenceTypesProduced: [EvidenceKind.TlsMetadata],
         SupportsRemediation: false,

@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using ACT.Contracts;
 
 namespace ACT.SourceAnalysis;
 
@@ -105,7 +106,7 @@ public sealed class RepositoryWalker
                     if (!resolution.Success)
                     {
                         Counters.IncrementSymlinkEscapes();
-                        yield return new SymlinkEscapeObservation(relativePath, resolution.TargetPath);
+                        yield return new SymlinkEscapeObservation(childRelative, resolution.TargetPath);
                         continue;
                     }
 

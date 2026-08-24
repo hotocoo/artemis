@@ -1,0 +1,35 @@
+{
+  "_comment": "Optional configuration file. Precedence: defaults <- this file <- ARTM_* environment variables <- CLI flags. Secret VALUES never belong here (only env-var NAMES).",
+  "Act": {
+    "Limits": {
+      "MaxConcurrency": 4,
+      "MaxRequestsPerAssessment": 2000,
+      "PerOperationTimeoutSeconds": 15
+    },
+    "Storage": {
+      "DatabasePath": "artemis.db",
+      "RetentionDays": 90,
+      "WalEnabled": true
+    },
+    "Feeds": {
+      "StaleAfterDays": 7,
+      "Sources": [
+        { "name": "osv", "kind": "Osv", "endpointOrPath": "https://api.osv.dev/v1/query", "enabled": true },
+        { "name": "offline-snapshot", "kind": "OfflineFile", "endpointOrPath": "./advisories.json", "enabled": false, "sha256": null }
+      ]
+    },
+    "Llm": {
+      "ProviderKind": "Disabled",
+      "Endpoint": null,
+      "Model": "",
+      "ApiKeyEnvironmentVariable": null
+    },
+    "Redaction": {
+      "Level": "Standard"
+    },
+    "Ui": {
+      "ConsolePort": 47320,
+      "OpenBrowserOnStart": true
+    }
+  }
+}

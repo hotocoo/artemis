@@ -1,0 +1,41 @@
+stages: [build, test]
+
+variables:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+build:
+  stage: build
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  script:
+    - dotnet restore Artemis.slnx
+    - dotnet build Artemis.slnx --no-restore -c Release
+
+unit-tests:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  script:
+    - dotnet test tests/ACT.Tests/ACT.Tests.csproj -c Release --logger:"junit;LogFilePath=unit-junit.xml"
+  artifacts:
+    when: always
+    reports:
+      junit: unit-junit.xml
+
+integration-tests:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  script:
+    - dotnet test tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj -c Release --logger:"junit;LogFilePath=integration-junit.xml"
+  artifacts:
+    when: always
+    reports:
+      junit: integration-junit.xml
+
+safety-tests:
+  stage: test
+  image: mcr.microsoft.com/dotnet/sdk:10.0
+  script:
+    - dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj -c Release --logger:"junit;LogFilePath=safety-junit.xml"
+  artifacts:
+    when: always
+    reports:
+      junit: safety-junit.xml

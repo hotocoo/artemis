@@ -2,4 +2,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="ACT.IntegrationTests" />
   </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ACT.Contracts/ACT.Contracts.csproj" />
+  </ItemGroup>
 </Project>

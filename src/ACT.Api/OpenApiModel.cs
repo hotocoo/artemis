@@ -44,7 +44,7 @@ public static class ApiSurfaceParser
                 $"OpenAPI JSON parse failure: {ex.Message}", ex);
         }
 
-        using var _ = document;
+        using var disposableDocument = document;
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
         {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -132,7 +133,7 @@ public sealed class StandardEvidenceRedactor : IEvidenceRedactor
             }
 
             var strictDeny = Policy == RedactionPolicy.Strict && !StrictHeaderAllowlist.Contains(name.ToLowerInvariant());
-            if ((!strictDeny && !IsSensitiveHeader(name)) && !(strictDeny && !IsAuthorization(name)))
+            if (!strictDeny && !IsSensitiveHeader(name))
             {
                 return match.Value;
             }

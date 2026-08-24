@@ -85,7 +85,7 @@ public sealed class ApiSurfaceAnalysisCheck : ISecurityCheck
                 "Mutating endpoints without declared authentication may be exposed anonymously in practice.",
                 "Operations with methods POST/PUT/PATCH/DELETE resolved to no effective security requirement.",
                 new RemediationGuidance("Require authentication for all mutating operations unless deliberately public.",
-                    ["Add security requirements to each mutating operation.", "Document intentionally-public endpoints explicitly with security: []"]),
+                    ["Add security requirements to each mutating operation.", "Document intentionally-public endpoints explicitly with security: []"],
                     ["https://owasp.org/www-project-api-security/"]));
         }
 
@@ -112,7 +112,8 @@ public sealed class ApiSurfaceAnalysisCheck : ISecurityCheck
                 new RemediationGuidance(
                     "Verify authorization on these operations using explicit test fixtures only.",
                     ["Provide principals from at least two tenants as fixtures.", "Run Artemis authorization checks; never probe with guessed identifiers."],
-                    ["https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/"]));
+                    ["https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/"]),
+                new FingerprintComponents(Metadata.Id, _baseUrl.ToString(), "object-id-paths", "id-surface"));
             findings.Add(finding);
         }
 
@@ -158,7 +159,7 @@ public sealed class ApiSurfaceAnalysisCheck : ISecurityCheck
 
         evidence.Add(context.Assessment.Evidence.Create(
             Guid.Empty, EvidenceKind.ConfigurationLocation, "openapi.operations", 
-            surface.Operations.Count.ToString(), Metadata.Id, context.Correlation ?? CorrelationId.New(),
+            surface.Operations.Count.ToString(), Metadata.Id, CorrelationId.New(),
             new Dictionary<string, string>
             {
                 ["title"] = surface.Title,
@@ -229,7 +230,7 @@ public sealed class ApiBehavioralCheck : ISecurityCheck
             try
             {
                 response = await context.Assessment.Http.SendAsync(new SafeHttpRequest(
-                    method, url, principal.AuthenticationHeaders, null, context.Correlation), cancellationToken);
+                    method, url, principal.AuthenticationHeaders, null, CorrelationId.New()), cancellationToken);
             }
             catch (ActException ex) when (ex.Category == ErrorCategory.Scope)
             {
