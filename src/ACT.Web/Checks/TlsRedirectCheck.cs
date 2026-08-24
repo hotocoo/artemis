@@ -56,6 +56,19 @@ public sealed class TlsRedirectCheck : HttpHeaderCheckBase
         return Analyze(context, baseUrl, httpUri, response, startedUtc);
     }
 
+    /// <summary>
+    /// Never reached through the base template: this check overrides ExecuteAsync to authorize
+    /// both schemes first and fetch the plain-HTTP origin itself. Implemented only to satisfy
+    /// the abstract base contract.
+    /// </summary>
+    protected override Task<SecurityCheckResult> AnalyzeAsync(
+        SecurityCheckContext context,
+        Uri baseUrl,
+        SafeHttpResponse response,
+        DateTimeOffset startedUtc,
+        CancellationToken cancellationToken)
+        => Task.FromResult(Analyze(context, baseUrl, baseUrl, response, startedUtc));
+
     private SecurityCheckResult Analyze(
         SecurityCheckContext context, Uri baseUrl, Uri httpUri, SafeHttpResponse response, DateTimeOffset startedUtc)
     {
@@ -79,8 +92,7 @@ public sealed class TlsRedirectCheck : HttpHeaderCheckBase
                         remediation: new RemediationGuidance(
                             "Redirect plain-HTTP requests directly to their HTTPS equivalent.",
                             ["Emit 'Location: https://<host>/<same-path>' with status 301 or 308 for every HTTP request."],
-                            ["OWASP Transport Layer Protection Cheat Sheet"]));
-                    CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
+                            ["OWASP Transport Layer Protection Cheat Sheet"])));                    CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
                         EvidenceKind.StatusCode, "redirect_status", response.StatusCode.ToString(CultureInfo.InvariantCulture), response.Correlation);
                 }
                 break;
@@ -96,8 +108,7 @@ public sealed class TlsRedirectCheck : HttpHeaderCheckBase
                     remediation: new RemediationGuidance(
                         "Redirect all plain-HTTP traffic to HTTPS.",
                         ["Return 301 or 308 with the https equivalent URL for every HTTP request.", "Consider HSTS after the redirect is stable."],
-                        ["OWASP Transport Layer Protection Cheat Sheet"]));
-                CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
+                        ["OWASP Transport Layer Protection Cheat Sheet"])));                CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
                     EvidenceKind.StatusCode, "http_status", "200", response.Correlation);
                 break;
 

@@ -1,0 +1,52 @@
+# Artemis Operator Manual
+
+## 0. Read this first
+
+Artemis assesses targets **you are explicitly authorized to test**. Every assessment requires a scope file with a signed authorization statement, an explicit allowlist, and hard limits. Artemis refuses ambiguity anywhere in authorization.
+
+## 1. Authoring a scope
+
+Start from `samples/scope.example.json`. Required fields:
+
+- `scopeId` / `assessmentId` - fresh GUIDs per scope/run.
+- `operatorIdentity`, `organization`, `authorizationStatement` - who you are and your claim of authority.
+- `targetType` - Localhost, PrivateIp, PrivateSubnet, Hostname, Domain, Url, LocalSourceRepository, LocalContainer, TestEnvironment.
+- `allowlistedTargets` - exact hostnames, CIDRs, URLs, or paths. Single-label names are rejected unless the type is TestEnvironment.
+- `excludedTargets` - always win over the allowlist.
+- `permittedPorts` / `permittedProtocols` - nothing outside these is ever contacted.
+- Rate, concurrency, runtime, and request caps - conservative defaults provided; configuration cannot raise engine hard caps.
+- `allowedCategories`/`prohibitedCategories` - category policy; contradictions are rejected.
+
+Validate before running anything:
+
+`artemis scope validate --file my-scope.json`
+
+For private-target scopes, DNS names must resolve INSIDE the configured networks or the run fails closed (DNS-rebinding defense). Redirects are re-authorized per hop; HTTPS-to-HTTP downgrades are always blocked.
+
+## 2. Authorization testing (optional)
+
+Provide fixtures (`samples/authorization-fixtures.example.json`) with test principals, objects, and expectations. Artemis verifies ONLY these explicit cases - it never guesses identifiers or credentials. Every confirmed access-control finding yields a machine-executable regression test.
+
+## 3. Running assessments
+
+`artemis assessment start --scope my-scope.json --json`
+
+During a run: every request passes rate limiting, scope verdicts, pinned DNS connections, timeouts, response-size caps, and decompression limits. The emergency stop cancels scheduling immediately and is audited.
+
+## 4. Reading results
+
+- CLI: `artemis finding list|show`, `artemis report generate`
+- Console: `artemis-console` serves the operator UI on 127.0.0.1 only.
+- Reports: JSON, CSV, Markdown, HTML, SARIF 2.1. Coverage states distinguish tested / not tested / inaccessible / inconclusive / confirmed / inferred - reports never claim an environment is secure because checks passed.
+
+## 5. Evidence, redaction, retention
+
+Evidence is redacted at creation (Authorization/Cookie headers, tokens, keys; strict mode available). Retention sweeps delete evidence older than the configured window; audit entries form a SHA-256 hash chain you can verify at any time.
+
+## 6. Advisory feeds
+
+OSV integration ships disabled by default. When enabled, retrieved advisories carry retrieval time and staleness flags - stale data is labeled stale, never silently presented as current. Offline snapshots with optional SHA-256 pinning work fully air-gapped.
+
+## 7. Emergency procedures
+
+Console button or `artemis assessment stop --emergency`: arms the latch, cancels all in-flight cancellable work, denies all new check execution until explicitly disarmed by an operator.

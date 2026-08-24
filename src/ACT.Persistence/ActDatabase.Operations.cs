@@ -1,3 +1,4 @@
+using System.Data.Common;
 using ACT.Contracts;
 using Microsoft.Data.Sqlite;
 
@@ -187,8 +188,8 @@ public sealed partial class ActDatabase
         }, cancellationToken);
 
     /// <summary>
-    /// Returns the enabled regression tests for the given findings whose verification window has
-    /// elapsed as of asOfUtc (never-run tests are immediately due).
+    /// Returns the enabled regression tests for the given findings whose scheduled verification
+    /// time (next_run_utc) has elapsed as of asOfUtc.
     /// </summary>
     public Task<IReadOnlyList<RegressionTestRecord>> ListDueRegressionsAsync(
         IReadOnlyList<Guid> findingIds, DateTimeOffset asOfUtc, CancellationToken cancellationToken = default)
@@ -212,7 +213,7 @@ public sealed partial class ActDatabase
             command.CommandText =
                 "SELECT * FROM regression_tests WHERE enabled = 1 AND finding_id IN ("
                 + string.Join(", ", parameters)
-                + ") AND (last_run_utc IS NULL OR next_run_utc <= $as_of) ORDER BY next_run_utc ASC";
+                + ") AND next_run_utc <= $as_of ORDER BY next_run_utc ASC";
             command.Parameters.AddWithValue("$as_of", Db(asOfUtc));
             await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
             var due = new List<RegressionTestRecord>();
@@ -407,21 +408,28 @@ public sealed partial class ActDatabase
                 LIMIT 1
                 """;
             command.Parameters.AddWithValue("$feed_name", feedName);
-            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
-            if (await reader.ReadAsync(token).ConfigureAwait(false))
+            FeedVersionRecord? current = null;
+            await using (var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false))
             {
-                return MapFeedVersion(reader);
+                if (await reader.ReadAsync(token).ConfigureAwait(false))
+                {
+                    current = MapFeedVersion(reader);
+                }
             }
 
-            await using var fallback = command.Connection.CreateCommand();
-            fallback.Transaction = command.Transaction;
-            fallback.CommandText = """
+            if (current is not null)
+            {
+                return current;
+            }
+
+            command.Parameters.Clear();
+            command.CommandText = """
                 SELECT feed_name, retrieved_utc, metadata_hash, is_current, note
                 FROM feed_versions WHERE feed_name = $feed_name
                 ORDER BY retrieved_utc DESC LIMIT 1
                 """;
-            fallback.Parameters.AddWithValue("$feed_name", feedName);
-            await using var fallbackReader = await fallback.ExecuteReaderAsync(token).ConfigureAwait(false);
+            command.Parameters.AddWithValue("$feed_name", feedName);
+            await using var fallbackReader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
             return await fallbackReader.ReadAsync(token).ConfigureAwait(false) ? MapFeedVersion(fallbackReader) : null;
         }, cancellationToken);
 

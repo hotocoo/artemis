@@ -79,49 +79,59 @@ public static class Cvss4Estimator
     /// <summary>Estimates the CVSS-v4-style base score, or null when any metric is unknown or out of range.</summary>
     public static double? Estimate(Cvss4Metrics? metrics)
     {
-        if (metrics is null ||
-            !Defined(metrics.AttackVector) ||
-            !Defined(metrics.PrivilegesRequired) ||
-            !Defined(metrics.UserInteraction) ||
-            !Defined(metrics.VulnerableConfidentiality) ||
-            !Defined(metrics.VulnerableIntegrity) ||
-            !Defined(metrics.VulnerableAvailability) ||
-            !Defined(metrics.SubsequentConfidentiality) ||
-            !Defined(metrics.SubsequentIntegrity) ||
-            !Defined(metrics.SubsequentAvailability) ||
-            !Defined(metrics.ExploitMaturity))
+        if (metrics is null
+            || metrics.AttackVector is not { } attackVector
+            || metrics.PrivilegesRequired is not { } privilegesRequired
+            || metrics.UserInteraction is not { } userInteraction
+            || metrics.VulnerableConfidentiality is not { } vulnerableConfidentiality
+            || metrics.VulnerableIntegrity is not { } vulnerableIntegrity
+            || metrics.VulnerableAvailability is not { } vulnerableAvailability
+            || metrics.SubsequentConfidentiality is not { } subsequentConfidentiality
+            || metrics.SubsequentIntegrity is not { } subsequentIntegrity
+            || metrics.SubsequentAvailability is not { } subsequentAvailability
+            || metrics.ExploitMaturity is not { } exploitMaturity
+            || !Enum.IsDefined(attackVector)
+            || !Enum.IsDefined(privilegesRequired)
+            || !Enum.IsDefined(userInteraction)
+            || !Enum.IsDefined(vulnerableConfidentiality)
+            || !Enum.IsDefined(vulnerableIntegrity)
+            || !Enum.IsDefined(vulnerableAvailability)
+            || !Enum.IsDefined(subsequentConfidentiality)
+            || !Enum.IsDefined(subsequentIntegrity)
+            || !Enum.IsDefined(subsequentAvailability)
+            || !Enum.IsDefined(exploitMaturity))
         {
             return null;
         }
 
-        var vulnerableSum = VulnerableImpact(metrics.VulnerableConfidentiality!.Value)
-                            + VulnerableImpact(metrics.VulnerableIntegrity!.Value)
-                            + VulnerableImpact(metrics.VulnerableAvailability!.Value);
-        var subsequentSum = SubsequentImpact(metrics.SubsequentConfidentiality!.Value)
-                            + SubsequentImpact(metrics.SubsequentIntegrity!.Value)
-                            + SubsequentImpact(metrics.SubsequentAvailability!.Value);
+        var vulnerableSum = VulnerableImpact(vulnerableConfidentiality)
+                            + VulnerableImpact(vulnerableIntegrity)
+                            + VulnerableImpact(vulnerableAvailability);
+        var subsequentSum = SubsequentImpact(subsequentConfidentiality)
+                            + SubsequentImpact(subsequentIntegrity)
+                            + SubsequentImpact(subsequentAvailability);
         var impact = (vulnerableSum + subsequentSum) / 12d * 10d;
 
         var exploitability =
-            metrics.AttackVector.Value switch
+            attackVector switch
             {
                 Cvss4AttackVector.Network => 1.00d,
                 Cvss4AttackVector.Adjacent => 0.86d,
                 Cvss4AttackVector.Local => 0.70d,
                 _ => 0.55d
             }
-            * (metrics.PrivilegesRequired.Value switch
+            * (privilegesRequired switch
             {
                 Cvss4PrivilegesRequired.None => 1.00d,
                 Cvss4PrivilegesRequired.Low => 0.88d,
                 _ => 0.70d
             })
-            * (metrics.UserInteraction.Value switch
+            * (userInteraction switch
             {
                 Cvss4UserInteraction.None => 1.00d,
                 _ => 0.85d
             })
-            * (metrics.ExploitMaturity.Value switch
+            * (exploitMaturity switch
             {
                 Cvss4ExploitMaturity.Attacked => 1.00d,
                 Cvss4ExploitMaturity.PocReported => 0.96d,
@@ -146,7 +156,4 @@ public static class Cvss4Estimator
         Cvss4Impact.Low => 0.5d,
         _ => 1.5d
     };
-
-    private static bool Defined<T>(T? value)
-        where T : struct, Enum => value is { } defined && Enum.IsDefined(defined);
 }

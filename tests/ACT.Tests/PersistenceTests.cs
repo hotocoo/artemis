@@ -1,0 +1,725 @@
+using System.Globalization;
+using System.Text.Json;
+using ACT.Contracts;
+using ACT.Persistence;
+using Microsoft.Data.Sqlite;
+using Xunit;
+
+namespace ACT.Tests;
+
+/// <summary>Integration tests for the SQLite persistence layer against unique temporary databases.</summary>
+public sealed class PersistenceTests
+{
+    // ---------- fixture ----------
+
+    private static async Task<PersistFixture> CreateDatabaseAsync() => await PersistFixture.CreateAsync();
+
+    private static ScopeDefinition MakeScope(Guid assessmentId) => new(
+        ScopeId: Guid.NewGuid(),
+        AssessmentId: assessmentId,
+        OperatorIdentity: "unit-test-operator",
+        Organization: "unit-test-org",
+        TargetType: TargetTypeKind.Localhost,
+        AllowlistedTargets: ["localhost"],
+        ExcludedTargets: [],
+        PermittedProtocols: [ProtocolKind.Https],
+        PermittedPorts: [PortRange.Single(8443)],
+        RequestsPerSecond: 5,
+        ConcurrencyLimit: 2,
+        MaxRuntime: TimeSpan.FromMinutes(30),
+        MaxRequests: 500,
+        AllowedCategories: Enum.GetValues<CheckCategory>(),
+        ProhibitedCategories: [],
+        EmergencyStopEnabled: true,
+        EvidenceRetentionPeriod: TimeSpan.FromDays(30),
+        DataRedactionPolicy: RedactionPolicy.Standard,
+        AuthorizationStatement: "I am authorized to assess these targets.");
+
+    private static AssessmentRecord MakeAssessment(string name = "assessment") => new(
+        AssessmentId: Guid.NewGuid(),
+        ScopeId: Guid.NewGuid(),
+        Name: name,
+        State: AssessmentRunState.Created,
+        CreatedUtc: DateTimeOffset.UtcNow,
+        StartedUtc: null,
+        CompletedUtc: null,
+        OperatorIdentity: "unit-test-operator",
+        Organization: "unit-test-org");
+
+    private static Finding MakeFinding(Guid assessmentId, string classification, Severity severity = Severity.Medium)
+    {
+        var finding = FindingFactory.Create(
+            assessmentId,
+            CheckId.From("CHK-TST"),
+            "svc.local:8443",
+            CheckCategory.Tls,
+            "Title " + classification,
+            "Description " + classification,
+            severity,
+            ConfidenceLevel.High,
+            exploitabilityIndicator: false,
+            BusinessImpactLevel.Limited,
+            "why it matters",
+            "technical explanation",
+            new RemediationGuidance("Fix it.", ["step-one", "step-two"], ["ref-one"]),
+            new FingerprintComponents(CheckId.From("CHK-TST"), "target.local", "resource", classification));
+        return finding with { PriorityScore = 42 };
+    }
+
+    private static EvidenceItem MakeEvidence(Guid findingId, string key, DateTimeOffset capturedAt) => new(
+        EvidenceId: Guid.NewGuid(),
+        FindingId: findingId,
+        Kind: EvidenceKind.HttpResponseMetadata,
+        Key: key,
+        RedactedValue: "redacted-" + key,
+        CapturedAtUtc: capturedAt,
+        CollectedBy: CheckId.From("CHK-TST"),
+        Correlation: CorrelationId.New(),
+        Attributes: new Dictionary<string, string> { ["source"] = "unit-test" });
+
+    private static async Task<long> RawCountAsync(PersistFixture fixture, string sql)
+    {
+        await using var connection = new SqliteConnection("Data Source=" + fixture.DatabasePath);
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = sql;
+        var raw = await command.ExecuteScalarAsync();
+        return Convert.ToInt64(raw, CultureInfo.InvariantCulture);
+    }
+
+    // ---------- migrations ----------
+
+    [Fact]
+    public async Task Persist_MigrateTwiceIsIdempotent()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            await fixture.Database.InitializeAsync();
+            var tablesAfterFirst = await RawCountAsync(fixture,
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'");
+            var migrationRows = await RawCountAsync(fixture, "SELECT COUNT(*) FROM schema_migrations");
+            await fixture.Database.InitializeAsync();
+            var tablesAfterSecond = await RawCountAsync(fixture,
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'");
+
+            Assert.Equal(1, migrationRows);
+            Assert.Equal(tablesAfterFirst, tablesAfterSecond);
+        }
+    }
+
+    // ---------- assessments / assets / services ----------
+
+    [Fact]
+    public async Task Persist_AssessmentAssetServiceRoundTrip()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = MakeAssessment();
+            var scope = MakeScope(assessment.AssessmentId);
+            await db.CreateAssessmentAsync(assessment, scope);
+
+            var loaded = await db.GetAssessmentAsync(assessment.AssessmentId);
+            Assert.NotNull(loaded);
+            Assert.Equivalent(assessment, loaded);
+
+            var assetId = Guid.NewGuid();
+            var firstInsert = await db.AddAssetAsync(new AssetRecord(
+                assetId, assessment.AssessmentId, AssetKind.Host, "web host", "localhost",
+                ["127.0.0.1"], DateTimeOffset.UtcNow, withinScope: true));
+            var duplicateInsert = await db.AddAssetAsync(new AssetRecord(
+                Guid.NewGuid(), assessment.AssessmentId, AssetKind.Host, "web host dup", "localhost",
+                [], DateTimeOffset.UtcNow, withinScope: true));
+            Assert.True(firstInsert);
+            Assert.False(duplicateInsert);
+
+            var service = new ServiceObservation(
+                Guid.NewGuid(), assetId, 8443, ProtocolKind.Https, "test banner", TlsNegotiated: true,
+                DateTimeOffset.UtcNow, CheckId.From("CHK-TST"));
+            Assert.True(await db.AddServiceAsync(service));
+            Assert.False(await db.AddServiceAsync(new ServiceObservation(
+                Guid.NewGuid(), assetId, 8443, ProtocolKind.Https, null, false,
+                DateTimeOffset.UtcNow, CheckId.From("CHK-TST"))));
+
+            var services = await RawCountAsync(fixture, "SELECT COUNT(*) FROM services WHERE asset_id = '"
+                + assetId.ToString("D") + "'");
+            Assert.Equal(1, services);
+
+            var list = await db.ListAssessmentsAsync(10);
+            Assert.Single(list);
+
+            await db.UpdateAssessmentStateAsync(assessment.AssessmentId, AssessmentRunState.Running);
+            var running = await db.GetAssessmentAsync(assessment.AssessmentId);
+            Assert.Equal(AssessmentRunState.Running, running!.State);
+            Assert.Null(await db.GetAssessmentAsync(Guid.NewGuid()));
+        }
+    }
+
+    // ---------- findings ----------
+
+    [Fact]
+    public async Task Persist_UpsertDedupeMergesLastSeenWithoutDuplicateRow()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = MakeAssessment();
+            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+
+            var original = MakeFinding(assessment.AssessmentId, "tls-expired");
+            var stored = await db.UpsertFindingAsync(original);
+            Assert.Equal(original.FindingId, stored.FindingId);
+
+            var reobservation = original with { LastSeenUtc = original.LastSeenUtc.AddHours(2) };
+            var merged = await db.UpsertFindingAsync(reobservation);
+
+            Assert.Equal(original.FirstSeenUtc, merged.FirstSeenUtc);
+            Assert.Equal(reobservation.LastSeenUtc, merged.LastSeenUtc);
+            Assert.Equal(original.Status, merged.Status);
+            Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM findings"));
+        }
+    }
+
+    [Fact]
+    public async Task Persist_TerminalStatusesAreNeverResurrected()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            foreach (var terminal in new[] { FindingStatus.AcceptedRisk, FindingStatus.FalsePositive, FindingStatus.Remediated })
+            {
+                var assessment = MakeAssessment("terminal-" + terminal);
+                await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+                var finding = MakeFinding(assessment.AssessmentId, "class-" + terminal);
+                await db.UpsertFindingAsync(finding);
+                await db.SetFindingStatusAsync(finding.FindingId, terminal, "triage-operator", CorrelationId.New());
+
+                var lateObservation = finding with { LastSeenUtc = finding.LastSeenUtc.AddDays(5) };
+                var result = await db.UpsertFindingAsync(lateObservation);
+
+                Assert.Equal(terminal, result.Status);
+                Assert.Equal(finding.LastSeenUtc, result.LastSeenUtc);
+                Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM findings"));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Persist_ListFindingsAppliesFilters()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = MakeAssessment();
+            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+
+            var low = MakeFinding(assessment.AssessmentId, "low-class", Severity.Low);
+            var medium = MakeFinding(assessment.AssessmentId, "medium-class", Severity.Medium);
+            var high = MakeFinding(assessment.AssessmentId, "high-class", Severity.High);
+            high = high with { Status = FindingStatus.Confirmed };
+            await db.UpsertFindingAsync(low);
+            await db.UpsertFindingAsync(medium);
+            await db.UpsertFindingAsync(high);
+
+            var all = await db.ListFindingsAsync(limit: 50);
+            Assert.Equal(3, all.Count);
+
+            var openOnly = await db.ListFindingsAsync(status: FindingStatus.New, limit: 50);
+            Assert.Equal(2, openOnly.Count);
+
+            var mediumPlus = await db.ListFindingsAsync(minSeverity: Severity.Medium, limit: 50);
+            Assert.Equal(2, mediumPlus.Count);
+            Assert.DoesNotContain(mediumPlus, f => f.TechnicalSeverity == Severity.Low);
+
+            var confirmedHigh = await db.ListFindingsAsync(
+                assessmentId: assessment.AssessmentId, status: FindingStatus.Confirmed, limit: 50);
+            Assert.Equal([high.FindingId], confirmedHigh.Select(f => f.FindingId).ToList());
+
+            Assert.Single(await db.ListFindingsAsync(limit: 1));
+            var otherAssessment = await db.ListFindingsAsync(assessmentId: Guid.NewGuid(), limit: 50);
+            Assert.Empty(otherAssessment);
+        }
+    }
+
+    [Fact]
+    public async Task Persist_SettingFindingStatusWritesAuditAndChangesStatus()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = MakeAssessment();
+            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var finding = MakeFinding(assessment.AssessmentId, "status-class");
+            await db.UpsertFindingAsync(finding);
+
+            var correlation = CorrelationId.New();
+            await db.SetFindingStatusAsync(finding.FindingId, FindingStatus.Confirmed, "triage-op", correlation);
+
+            var listed = await db.ListFindingsAsync(status: FindingStatus.Confirmed, limit: 10);
+            Assert.Equal(finding.FindingId, listed.Single().FindingId);
+
+            var recent = await db.ReadRecentAuditAsync(5);
+            var statusEntry = Assert.Single(recent, e => e.Action == "FINDING_STATUS_SET");
+            Assert.Equal(finding.FindingId.ToString(), statusEntry.ObjectId);
+            Assert.Equal(correlation, statusEntry.Correlation);
+
+            await Assert.ThrowsAsync<ActException>(() =>
+                db.SetFindingStatusAsync(Guid.NewGuid(), FindingStatus.Confirmed, "triage-op", CorrelationId.New()));
+        }
+    }
+
+    // ---------- evidence and retention ----------
+
+    [Fact]
+    public async Task Persist_RetentionDeletesOnlyOldEvidence()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = MakeAssessment();
+            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var finding = MakeFinding(assessment.AssessmentId, "evidence-class");
+            await db.UpsertFindingAsync(finding);
+
+            var now = DateTimeOffset.UtcNow;
+            var fresh = MakeEvidence(finding.FindingId, "fresh-header", now);
+            var stale = MakeEvidence(finding.FindingId, "stale-header", now.AddDays(-14));
+            var ancient = MakeEvidence(finding.FindingId, "ancient-header", now.AddDays(-40));
+            Assert.Equal(3, await db.AddEvidenceBatchAsync([fresh, stale, ancient]));
+
+            var sweeper = new RetentionSweeper(db);
+            var deleted = await sweeper.DeleteEvidenceOlderThanAsync(TimeSpan.FromDays(7), secureWipe: false);
+            Assert.Equal(2, deleted);
+            Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM evidence"));
+
+            var secondPass = await sweeper.DeleteEvidenceOlderThanAsync(TimeSpan.FromDays(7), secureWipe: true);
+            Assert.Equal(0, secondPass);
+            Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM evidence"));
+        }
+    }
+
+    // ---------- audit chain ----------
+
+    [Fact]
+    public async Task Persist_AuditChainVerifiesWhenUntampered()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var appended = new List<AuditEvent>();
+            for (var index = 0; index < 5; index++)
+            {
+                appended.Add(await db.AppendAuditAsync(new AuditDraft(
+                    Actor: "operator",
+                    Action: "ASSESSMENT_START",
+                    ObjectType: "assessment",
+                    ObjectId: Guid.NewGuid().ToString(),
+                    Result: "OK",
+                    Correlation: CorrelationId.New())));
+            }
+
+            Assert.True(await db.VerifyChainAsync());
+            Assert.Equal(appended[0].Sequence + 4, appended[^1].Sequence);
+            Assert.Equal(GenesisAuditHash, appended[0].PreviousEventHash);
+            for (var index = 1; index < appended.Count; index++)
+            {
+                Assert.Equal(appended[index - 1].EventHash, appended[index].PreviousEventHash);
+            }
+
+            var recent = await db.ReadRecentAuditAsync(3);
+            Assert.Equal(3, recent.Count);
+            Assert.Equal(appended[^1].EventHash, recent[0].EventHash);
+            Assert.Equal(appended[^2].EventHash, recent[1].EventHash);
+        }
+    }
+
+    [Fact]
+    public async Task Persist_TamperedAuditBreaksChainVerification()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            for (var index = 0; index < 3; index++)
+            {
+                await db.AppendAuditAsync(new AuditDraft(
+                    Actor: "operator",
+                    Action: "FINDING_STATUS_SET",
+                    ObjectType: "finding",
+                    ObjectId: Guid.NewGuid().ToString(),
+                    Result: "OK",
+                    Correlation: CorrelationId.New()));
+            }
+
+            Assert.True(await db.VerifyChainAsync());
+
+            await using (var connection = new SqliteConnection("Data Source=" + fixture.DatabasePath))
+            {
+                await connection.OpenAsync();
+                var command = connection.CreateCommand();
+                command.CommandText =
+                    "UPDATE audit_events SET result = 'unexpected-result' WHERE sequence = 2";
+                Assert.Equal(1, await command.ExecuteNonQueryAsync());
+            }
+
+            Assert.False(await db.VerifyChainAsync());
+        }
+    }
+
+    // ---------- dashboard ----------
+
+    [Fact]
+    public async Task Persist_DashboardAggregatesMatchSeededData()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = MakeAssessment();
+            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+
+            for (var index = 0; index < 3; index++)
+            {
+                await db.AddAssetAsync(new AssetRecord(
+                    Guid.NewGuid(), assessment.AssessmentId, AssetKind.Host, "host-" + index,
+                    "host-" + index + ".lab", [], DateTimeOffset.UtcNow, withinScope: true));
+            }
+
+            var assetId = await FirstAssetIdAsync(fixture);
+            foreach (var port in new[] { 443, 8080 })
+            {
+                await db.AddServiceAsync(new ServiceObservation(
+                    Guid.NewGuid(), assetId, port, ProtocolKind.Https, null,
+                    TlsNegotiated: true, DateTimeOffset.UtcNow, CheckId.From("CHK-TST")));
+            }
+
+            var seeded = new (string Class, Severity Severity, FindingStatus Status, double Priority)[]
+            {
+                ("dash-high", Severity.High, FindingStatus.New, 80),
+                ("dash-critical", Severity.Critical, FindingStatus.New, 95),
+                ("dash-medium-open", Severity.Medium, FindingStatus.New, 40),
+                ("dash-confirmed", Severity.Low, FindingStatus.Confirmed, 30),
+                ("dash-remediated", Severity.High, FindingStatus.Remediated, 70),
+                ("dash-false-positive", Severity.Informational, FindingStatus.FalsePositive, 0),
+                ("dash-regressed", Severity.Medium, FindingStatus.Regressed, 55),
+            };
+            foreach (var seed in seeded)
+            {
+                await db.UpsertFindingAsync(MakeFinding(assessment.AssessmentId, seed.Class, seed.Severity)
+                    with { Status = seed.Status, PriorityScore = seed.Priority });
+            }
+
+            var checkStatuses = new[]
+            {
+                CheckExecutionStatus.Completed,
+                CheckExecutionStatus.CompletedWithWarnings,
+                CheckExecutionStatus.Failed_FailedClosed
+            };
+            foreach (var status in checkStatuses)
+            {
+                await db.RecordCheckRunAsync(SecurityCheckResult.Empty(
+                    new SecurityCheckMetadata(
+                        CheckId.From("CHK-TST"), "t", "1.0", CheckCategory.Tls, Severity.High,
+                        SafetyLevel.SafeRequestOnly, PermissionRequirement.None,
+                        new HashSet<ProtocolKind>(), new HashSet<TargetTypeKind>(),
+                        new NetworkBehaviorProfile(0, 1, false, false, false), [], true, false, "d"),
+                    DateTimeOffset.UtcNow, status), assessment.AssessmentId);
+            }
+
+            await db.SaveScanMetricsAsync(new ScanMetricsRecord(
+                assessment.AssessmentId, 100, 2, 0, 3, TimeSpan.FromSeconds(600), 4096));
+            await db.SaveScanMetricsAsync(new ScanMetricsRecord(
+                Guid.NewGuid(), 50, 1, 1, 1, TimeSpan.FromSeconds(1200), 2048));
+
+            var snapshot = await db.DashboardAsync();
+            Assert.Equal(2, snapshot.AssessmentsTotal);
+            Assert.Equal(3, snapshot.AssetsAssessed);
+            Assert.Equal(2, snapshot.ServicesObserved);
+            Assert.Equal(5, snapshot.FindingsOpen);
+            Assert.Equal(2, snapshot.FindingsCriticalOrHigh);
+            Assert.Equal(1, snapshot.FindingsConfirmed);
+            Assert.Equal(1, snapshot.FindingsRemediated);
+            Assert.Equal(1, snapshot.RegressionsDetected);
+            Assert.Equal(1, snapshot.FalsePositives);
+            Assert.Equal(3, snapshot.ChecksExecuted);
+            Assert.Equal(1, snapshot.ChecksFailed);
+            Assert.Equal(15.0, snapshot.AverageScanDurationMinutes, precision: 6);
+            Assert.Equal(150, snapshot.RequestCount);
+            Assert.Equal(95, snapshot.CurrentRiskScore);
+        }
+    }
+
+    private static async Task<Guid> FirstAssetIdAsync(PersistFixture fixture)
+    {
+        await using var connection = new SqliteConnection("Data Source=" + fixture.DatabasePath);
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = "SELECT asset_id FROM assets LIMIT 1";
+        var raw = await command.ExecuteScalarAsync();
+        return Guid.Parse((string)raw!);
+    }
+
+    // ---------- scan metrics ----------
+
+    [Fact]
+    public async Task Persist_ScanMetricsRoundTripAndReplace()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = MakeAssessment();
+            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+
+            await db.SaveScanMetricsAsync(new ScanMetricsRecord(
+                assessment.AssessmentId, 10, 2, 0, 1, TimeSpan.FromSeconds(90), 1024));
+            var loaded = await db.GetMetricsAsync(assessment.AssessmentId);
+            Assert.NotNull(loaded);
+            Assert.Equal(10, loaded.RequestsSent);
+            Assert.Equal(TimeSpan.FromSeconds(90), loaded.TotalDuration);
+
+            await db.SaveScanMetricsAsync(new ScanMetricsRecord(
+                assessment.AssessmentId, 20, 3, 1, 2, TimeSpan.FromMinutes(3), 2048));
+            var replaced = await db.GetMetricsAsync(assessment.AssessmentId);
+            Assert.Equal(20, replaced!.RequestsSent);
+            Assert.Equal(TimeSpan.FromMinutes(3), replaced.TotalDuration);
+            Assert.Null(await db.GetMetricsAsync(Guid.NewGuid()));
+        }
+    }
+
+    // ---------- configuration store ----------
+
+    private sealed record Preference(bool Verbose, int Level);
+
+    [Fact]
+    public async Task Persist_ConfigStoreRoundTripsTypedValues()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            await db.SetConfigAsync("limits.requests", 250);
+            await db.SetConfigAsync("ui.title", "console");
+            await db.SetConfigAsync("ops.pref", new Preference(true, 3));
+
+            Assert.Equal(250, await db.GetConfigAsync<int>("limits.requests"));
+            Assert.Equal("console", await db.GetConfigAsync<string>("ui.title"));
+            Assert.Equal(new Preference(true, 3), await db.GetConfigAsync<Preference>("ops.pref"));
+
+            await db.SetConfigAsync("limits.requests", 999);
+            Assert.Equal(999, await db.GetConfigAsync<int>("limits.requests"));
+
+            Assert.Equal(0, await db.GetConfigAsync<int>("missing.key"));
+            Assert.Null(await db.GetConfigAsync<string>("missing.key"));
+
+            await Assert.ThrowsAsync<ActException>(() => db.SetConfigAsync("", 1));
+        }
+    }
+
+    // ---------- schedules ----------
+
+    [Fact]
+    public async Task Persist_ScheduleLifecyclePersistsEnablementAndRuns()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var scope = MakeScope(Guid.NewGuid());
+            var schedule = new ScheduleDefinition(
+                Guid.NewGuid(), "nightly", scope.ScopeId, "0 3 * * *", ScheduleTriggerKind.Scheduled,
+                Enabled: true, CreatedUtc: DateTimeOffset.UtcNow, LastRunUtc: null);
+            await db.SaveScheduleAsync(schedule);
+
+            var disabled = schedule with { ScheduleId = Guid.NewGuid(), Name = "paused", Enabled = false };
+            await db.SaveScheduleAsync(disabled);
+
+            var enabled = await db.ListEnabledSchedulesAsync();
+            Assert.Single(enabled);
+            Assert.Equal(schedule.ScheduleId, enabled[0].ScheduleId);
+
+            var ranAt = DateTimeOffset.UtcNow.AddHours(-1);
+            await db.MarkScheduleRanAsync(schedule.ScheduleId, ranAt);
+            var afterRun = await db.ListEnabledSchedulesAsync();
+            Assert.Equal(ranAt, afterRun[0].LastRunUtc);
+
+            var updated = schedule with { CronExpression = "30 4 * * *" };
+            await db.SaveScheduleAsync(updated);
+            Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM schedules"));
+
+            await Assert.ThrowsAsync<ActException>(() =>
+                db.MarkScheduleRanAsync(Guid.NewGuid(), DateTimeOffset.UtcNow));
+        }
+    }
+
+    // ---------- baselines ----------
+
+    [Fact]
+    public async Task Persist_LatestBaselineReturnsMostRecentForScope()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var scopeId = Guid.NewGuid();
+            var older = new SecurityBaseline(
+                Guid.NewGuid(), scopeId, "base-1",
+                [new ServiceBaselineEntry(443, ProtocolKind.Https, BaselineServiceStatus.Expected)],
+                [], DateTimeOffset.UtcNow.AddDays(-7));
+            var newer = new SecurityBaseline(
+                Guid.NewGuid(), scopeId, "base-2",
+                [new ServiceBaselineEntry(443, ProtocolKind.Https, BaselineServiceStatus.Expected)],
+                ["accepted-fingerprint"], DateTimeOffset.UtcNow);
+            await db.SaveBaselineAsync(older);
+            await db.SaveBaselineAsync(newer);
+
+            var latest = await db.GetLatestBaselineAsync(scopeId);
+            Assert.NotNull(latest);
+            Assert.Equal(newer.BaselineId, latest.BaselineId);
+            Assert.Contains("accepted-fingerprint", latest.AcceptedFindingFingerprints);
+
+            Assert.Null(await db.GetLatestBaselineAsync(Guid.NewGuid()));
+        }
+    }
+
+    // ---------- regression tests ----------
+
+    [Fact]
+    public async Task Persist_RegressionTestsReportDueOnlyWithinCadence()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = MakeAssessment();
+            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var finding = MakeFinding(assessment.AssessmentId, "regression-class");
+            await db.UpsertFindingAsync(finding);
+
+            var created = DateTimeOffset.UtcNow.AddDays(-30);
+            var test = new RegressionTestRecord(
+                Guid.NewGuid(), assessment.AssessmentId, finding.FindingId, "verify-tls",
+                "Re-run TLS verification", Severity.High, TimeSpan.FromDays(7), Enabled: true,
+                created, LastRunUtc: null, NextRunUtc: default);
+            await db.SaveRegressionTestAsync(test);
+
+            var stored = await db.GetRegressionTestAsync(test.RegressionTestId);
+            Assert.NotNull(stored);
+            Assert.Equal(created.AddDays(7), stored.NextRunUtc);
+
+            var dueBeforeWindow = await db.ListDueRegressionsAsync([finding.FindingId], created.AddDays(6));
+            Assert.Empty(dueBeforeWindow);
+
+            var dueAtWindow = await db.ListDueRegressionsAsync([finding.FindingId], created.AddDays(7));
+            Assert.Single(dueAtWindow);
+
+            var ranAt = created.AddDays(8);
+            var run = await db.RecordTestRunAsync(test.RegressionTestId, ranAt, VerificationState.Tested, "clean run");
+            Assert.Equal(ranAt.AddDays(7), (await db.GetRegressionTestAsync(test.RegressionTestId))!.NextRunUtc);
+            var dueAfterRunBeforeCadence =
+                await db.ListDueRegressionsAsync([finding.FindingId], ranAt.AddDays(6));
+            Assert.Empty(dueAfterRunBeforeCadence);
+            Assert.Single(await db.ListDueRegressionsAsync([finding.FindingId], ranAt.AddDays(8)));
+
+            Assert.Single(await db.ListRegressionsForAssessmentAsync(assessment.AssessmentId));
+            Assert.Empty(await db.ListRegressionsForAssessmentAsync(Guid.NewGuid()));
+            Assert.Empty(await db.ListDueRegressionsAsync([], DateTimeOffset.UtcNow));
+
+            await Assert.ThrowsAsync<ActException>(() =>
+                db.RecordTestRunAsync(Guid.NewGuid(), ranAt, VerificationState.Tested, "orphan"));
+        }
+    }
+
+    // ---------- feeds ----------
+
+    [Fact]
+    public async Task Persist_FeedVersionsTrackLatestCurrentGeneration()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var updated = DateTimeOffset.UtcNow;
+            await db.UpsertFeedAsync(new FeedRecord(
+                "osv-lab", AdvisoryFeedKind.OfflineFile, "/tmp/lab/osv-snapshot.json", Enabled: true, updated));
+
+            var firstRetrieved = DateTimeOffset.UtcNow.AddDays(-2);
+            var secondRetrieved = DateTimeOffset.UtcNow;
+            await db.RecordFeedVersionAsync("osv-lab", firstRetrieved, "hash-one", isCurrent: true, "initial pull");
+            await db.RecordFeedVersionAsync("osv-lab", secondRetrieved, "hash-two", isCurrent: true, "refresh");
+
+            var latest = await db.LatestFeedVersionAsync("osv-lab");
+            Assert.NotNull(latest);
+            Assert.Equal("hash-two", latest.MetadataHash);
+            Assert.True(latest.IsCurrent);
+
+            Assert.Equal(1, await RawCountAsync(fixture,
+                "SELECT COUNT(*) FROM feed_versions WHERE feed_name = 'osv-lab' AND is_current = 1"));
+
+            Assert.Null(await db.LatestFeedVersionAsync("never-configured"));
+
+            await Assert.ThrowsAsync<ActException>(() =>
+                db.RecordFeedVersionAsync("ghost-feed", DateTimeOffset.UtcNow, "hash-x", true, "no such feed"));
+        }
+    }
+}
+
+/// <summary>Isolated per-test database in a temporary directory that is removed on disposal.</summary>
+public sealed class PersistFixture : IAsyncDisposable
+{
+    private readonly string _directory;
+
+    private PersistFixture(string directory, ActDatabase database, string databasePath)
+    {
+        _directory = directory;
+        Database = database;
+        DatabasePath = databasePath;
+    }
+
+    /// <summary>The initialized database under test.</summary>
+    public ActDatabase Database { get; }
+
+    /// <summary>Absolute path of the database file, usable for raw verification commands.</summary>
+    public string DatabasePath { get; }
+
+    /// <summary>Creates a unique temporary database with schema v1 applied.</summary>
+    public static async Task<PersistFixture> CreateAsync()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "act-persist-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var databasePath = Path.Combine(directory, "act.db");
+        var database = new ActDatabase(databasePath, new StorageOptions
+        {
+            DatabasePath = databasePath,
+            WalEnabled = true,
+            RetentionDays = 90
+        });
+        await database.InitializeAsync();
+        return new PersistFixture(directory, database, databasePath);
+    }
+
+    /// <summary>Closes the database and deletes the temporary directory.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        await Database.DisposeAsync();
+        SqliteConnection.ClearAllPools();
+        try
+        {
+            Directory.Delete(_directory, recursive: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+}

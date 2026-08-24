@@ -23,6 +23,13 @@ public static class CommandRegistry
     {
         Register("config", ConfigCommand.Run);
         Register("scope", ScopeCommand.Run);
+        Register("doctor", DoctorCommand.Run);
+        Register("assessment", AssessmentCommands.Run);
+        Register("check", CheckCommand.Run);
+        Register("finding", FindingCommands.Run);
+        Register("report", ReportCommands.Run);
+        Register("regression", RegressionCommands.Run);
+        Register("feed", FeedCommands.Run);
     }
 
     public static void Register(string name, CommandHandler handler) => Commands[name] = handler;
@@ -52,6 +59,13 @@ public static class HelpPrinter
     {
         "config" => "show the effective, redacted configuration",
         "scope" => "validate and list assessment scopes",
+        "doctor" => "environment health: db, audit chain, feeds, filesystem, network",
+        "assessment" => "create | start | status | stop assessments",
+        "check" => "list built-in security checks",
+        "finding" => "list and show stored findings",
+        "report" => "generate JSON/CSV/Markdown/HTML/SARIF reports",
+        "regression" => "replay machine-executable regression tests",
+        "feed" => "refresh advisory feed state (stale data is labeled)",
         _ => ""
     };
 }

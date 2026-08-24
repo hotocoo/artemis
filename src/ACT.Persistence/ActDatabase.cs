@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text;
 using ACT.Contracts;
@@ -204,13 +205,13 @@ public sealed partial class ActDatabase : IAsyncDisposable
             foreach (var statement in SchemaV1.Statements)
             {
                 await using var command = connection.CreateCommand();
-                command.Transaction = transaction;
+                command.Transaction = (SqliteTransaction)transaction;
                 command.CommandText = statement;
                 await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             }
 
             await using var record = connection.CreateCommand();
-            record.Transaction = transaction;
+            record.Transaction = (SqliteTransaction)transaction;
             record.CommandText = """
                 INSERT INTO schema_migrations(version, name, checksum, applied_utc)
                 VALUES($version, $name, $checksum, $applied_utc)
@@ -299,7 +300,7 @@ public sealed partial class ActDatabase : IAsyncDisposable
         command.CommandText = sql;
         if (transaction is not null)
         {
-            command.Transaction = transaction;
+            command.Transaction = (SqliteTransaction)transaction;
         }
 
         return command;

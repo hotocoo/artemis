@@ -273,12 +273,15 @@ public class LlmTests
     {
         var wrapped = UntrustedContent.Wrap("l", "bad\u0000\u0007value\rline\nnext\ttail\u001b\u009f");
 
-        Assert.DoesNotContain("\u0000", wrapped);
-        Assert.DoesNotContain("\u0007", wrapped);
-        Assert.DoesNotContain("\u001b", wrapped);
-        Assert.DoesNotContain("\u009f", wrapped);
-        Assert.DoesNotContain("\r", wrapped);
-        Assert.Contains("line\nnext", wrapped);
+        // Char overloads compare exactly; collating substring search ignores control characters.
+        foreach (var forbidden in new[] { '\u0000', '\u0007', '\u001b', '\u009f', '\r' })
+        {
+            Assert.DoesNotContain(forbidden, wrapped);
+        }
+
+        Assert.Contains('\n', wrapped);
+        Assert.Contains('\t', wrapped);
+        Assert.Contains("valueline", wrapped);
     }
 
     [Fact]
@@ -401,7 +404,8 @@ public class LlmTests
     {
         var fake = new FakeProvider(FakeProvider.Mode.Canned, "- suggested-group");
         var longDescription = new string('d', 400) + "TAIL-MARKER";
-        var findings = new List<Finding> { SampleFinding(0, longDescription), SampleFinding(1, "short observation") };
+        var finding = SampleFinding(0, longDescription);
+        var findings = new List<Finding> { finding, SampleFinding(1, "short observation") };
 
         var result = await new HistoricalCorrelator(fake).TryCorrelateAsync(findings, CancellationToken.None);
 
@@ -410,7 +414,10 @@ public class LlmTests
         var block = Assert.Single(fake.LastRequest!.UntrustedBlocks);
         Assert.Equal("historical-findings", block.Label);
         Assert.DoesNotContain("TAIL-MARKER", block.Content);
-        Assert.Contains(new string('d', HistoricalCorrelator.PerFindingMaxLength), block.Content);
+        var linePrefixLength = $"[{finding.TechnicalSeverity}] {finding.Title}: ".Length;
+        var keptDs = HistoricalCorrelator.PerFindingMaxLength - linePrefixLength;
+        Assert.Contains(new string('d', keptDs), block.Content);
+        Assert.DoesNotContain(new string('d', keptDs + 1), block.Content);
         Assert.Contains("short observation", block.Content);
     }
 }
