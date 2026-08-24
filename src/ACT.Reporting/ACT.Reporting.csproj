@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../ACT.Contracts/ACT.Contracts.csproj" />
+    <ProjectReference Include="../ACT.Persistence/ACT.Persistence.csproj" />
+    <ProjectReference Include="../ACT.Risk/ACT.Risk.csproj" />
+  </ItemGroup>
+</Project>

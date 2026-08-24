@@ -1,0 +1,30 @@
+<Solution>
+  <Folder Name="/lab/">
+    <Project Path="lab/ACT.Lab/ACT.Lab.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/ACT.Api/ACT.Api.csproj" />
+    <Project Path="src/ACT.Cli/ACT.Cli.csproj" />
+    <Project Path="src/ACT.Contracts/ACT.Contracts.csproj" />
+    <Project Path="src/ACT.Core/ACT.Core.csproj" />
+    <Project Path="src/ACT.DependencyAnalysis/ACT.DependencyAnalysis.csproj" />
+    <Project Path="src/ACT.Desktop/ACT.Desktop.csproj" />
+    <Project Path="src/ACT.Evidence/ACT.Evidence.csproj" />
+    <Project Path="src/ACT.Llm/ACT.Llm.csproj" />
+    <Project Path="src/ACT.Network/ACT.Network.csproj" />
+    <Project Path="src/ACT.Persistence/ACT.Persistence.csproj" />
+    <Project Path="src/ACT.Policy/ACT.Policy.csproj" />
+    <Project Path="src/ACT.Reporting/ACT.Reporting.csproj" />
+    <Project Path="src/ACT.Risk/ACT.Risk.csproj" />
+    <Project Path="src/ACT.Scope/ACT.Scope.csproj" />
+    <Project Path="src/ACT.SourceAnalysis/ACT.SourceAnalysis.csproj" />
+    <Project Path="src/ACT.Tls/ACT.Tls.csproj" />
+    <Project Path="src/ACT.Web/ACT.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ACT.Benchmarks/ACT.Benchmarks.csproj" />
+    <Project Path="tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj" />
+    <Project Path="tests/ACT.SecurityTests/ACT.SecurityTests.csproj" />
+    <Project Path="tests/ACT.Tests/ACT.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ACT.Contracts/ACT.Contracts.csproj" />
+    <ProjectReference Include="../ACT.Core/ACT.Core.csproj" />
+    <ProjectReference Include="../ACT.Cli/ACT.Cli.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>
