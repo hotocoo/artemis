@@ -1,6 +1,7 @@
 
 using System.Text.Json;
 using ACT.Contracts;
+using ACT.Core;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -62,43 +63,28 @@ public sealed class GlobalOptions
         }
         remaining = [.. rest];
 
-        var parsed = new Dictionary<string, object?>
+        return new GlobalOptions
         {
-            ["Json"] = options.ContainsKey("json"),
-            ["Quiet"] = options.ContainsKey("quiet"),
-            ["Verbose"] = options.ContainsKey("verbose"),
-            ["OutputPath"] = options.GetValueOrDefault("output"),
-            ["ConfigFile"] = options.GetValueOrDefault("config"),
+            Json = options.ContainsKey("json"),
+            Quiet = options.ContainsKey("quiet"),
+            Verbose = options.ContainsKey("verbose"),
+            OutputPath = options.GetValueOrDefault("output"),
+            ConfigFile = options.GetValueOrDefault("config"),
+            TimeoutSeconds = ParsePositiveInt(options.GetValueOrDefault("timeout"), "--timeout"),
+            MaxConcurrency = ParsePositiveInt(options.GetValueOrDefault("concurrency"), "--max-concurrency"),
         };
-        if (options.TryGetValue("timeout", out var timeout))
-        {
-            if (!int.TryParse(timeout, out var seconds) || seconds <= 0)
-            {
-                throw new ActException(ErrorCategory.Configuration,
-                    "The --timeout value must be a positive integer of seconds.",
-                    $"Unparseable --timeout '{timeout}'.");
-            }
-            parsed["TimeoutSeconds"] = seconds;
-        }
-        if (options.TryGetValue("concurrency", out var concurrency))
-        {
-            if (!int.TryParse(concurrency, out var c) || c <= 0)
-            {
-                throw new ActException(ErrorCategory.Configuration,
-                    "The --max-concurrency value must be a positive integer.",
-                    $"Unparseable --max-concurrency '{concurrency}'.");
-            }
-            parsed["MaxConcurrency"] = c;
-        }
+    }
 
-        return new GlobalOptions(
-            Json: (bool)parsed["Json"],
-            Quiet: (bool)parsed["Quiet"],
-            Verbose: (bool)parsed["Verbose"],
-            OutputPath: (string?)parsed["OutputPath"],
-            TimeoutSeconds: (int?)parsed["TimeoutSeconds"],
-            MaxConcurrency: (int?)parsed["MaxConcurrency"],
-            ConfigFile: (string?)parsed["ConfigFile"]);
+    private static int? ParsePositiveInt(string? raw, string flag)
+    {
+        if (raw is null) return null;
+        if (!int.TryParse(raw, out var value) || value <= 0)
+        {
+            throw new ActException(ErrorCategory.Configuration,
+                $"The {flag} value must be a positive integer.",
+                $"Unparseable {flag} '{raw}'.");
+        }
+        return value;
     }
 
     private static void RequireValue(string[] args, ref int index, string flag)

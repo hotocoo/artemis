@@ -14,8 +14,8 @@ public sealed class PersistenceTests
 
     private static async Task<PersistFixture> CreateDatabaseAsync() => await PersistFixture.CreateAsync();
 
-    private static ScopeDefinition MakeScope(Guid assessmentId) => new(
-        ScopeId: Guid.NewGuid(),
+    private static ScopeDefinition MakeScope(Guid scopeId, Guid assessmentId) => new(
+        ScopeId: scopeId,
         AssessmentId: assessmentId,
         OperatorIdentity: "unit-test-operator",
         Organization: "unit-test-org",
@@ -45,6 +45,16 @@ public sealed class PersistenceTests
         CompletedUtc: null,
         OperatorIdentity: "unit-test-operator",
         Organization: "unit-test-org");
+
+    /// <summary>Creates one assessment together with its matching scope definition.</summary>
+    private static async Task<AssessmentRecord> CreatePairedAsync(ActDatabase db, string name = "assessment")
+    {
+        var assessmentId = Guid.NewGuid();
+        var scopeId = Guid.NewGuid();
+        var assessment = MakeAssessment(name) with { AssessmentId = assessmentId, ScopeId = scopeId };
+        await db.CreateAssessmentAsync(assessment, MakeScope(scopeId, assessmentId));
+        return assessment;
+    }
 
     private static Finding MakeFinding(Guid assessmentId, string classification, Severity severity = Severity.Medium)
     {
@@ -117,8 +127,10 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var assessment = MakeAssessment();
-            var scope = MakeScope(assessment.AssessmentId);
+            var assessmentId = Guid.NewGuid();
+            var scopeId = Guid.NewGuid();
+            var assessment = MakeAssessment() with { AssessmentId = assessmentId, ScopeId = scopeId };
+            var scope = MakeScope(scopeId, assessmentId);
             await db.CreateAssessmentAsync(assessment, scope);
 
             var loaded = await db.GetAssessmentAsync(assessment.AssessmentId);
@@ -128,10 +140,10 @@ public sealed class PersistenceTests
             var assetId = Guid.NewGuid();
             var firstInsert = await db.AddAssetAsync(new AssetRecord(
                 assetId, assessment.AssessmentId, AssetKind.Host, "web host", "localhost",
-                ["127.0.0.1"], DateTimeOffset.UtcNow, withinScope: true));
+                ["127.0.0.1"], DateTimeOffset.UtcNow, WithinScope: true));
             var duplicateInsert = await db.AddAssetAsync(new AssetRecord(
                 Guid.NewGuid(), assessment.AssessmentId, AssetKind.Host, "web host dup", "localhost",
-                [], DateTimeOffset.UtcNow, withinScope: true));
+                [], DateTimeOffset.UtcNow, WithinScope: true));
             Assert.True(firstInsert);
             Assert.False(duplicateInsert);
 
@@ -166,8 +178,7 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var assessment = MakeAssessment();
-            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var assessment = await CreatePairedAsync(db);
 
             var original = MakeFinding(assessment.AssessmentId, "tls-expired");
             var stored = await db.UpsertFindingAsync(original);
@@ -192,8 +203,7 @@ public sealed class PersistenceTests
             var db = fixture.Database;
             foreach (var terminal in new[] { FindingStatus.AcceptedRisk, FindingStatus.FalsePositive, FindingStatus.Remediated })
             {
-                var assessment = MakeAssessment("terminal-" + terminal);
-                await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+                var assessment = await CreatePairedAsync(db, "terminal-" + terminal);
                 var finding = MakeFinding(assessment.AssessmentId, "class-" + terminal);
                 await db.UpsertFindingAsync(finding);
                 await db.SetFindingStatusAsync(finding.FindingId, terminal, "triage-operator", CorrelationId.New());
@@ -203,7 +213,9 @@ public sealed class PersistenceTests
 
                 Assert.Equal(terminal, result.Status);
                 Assert.Equal(finding.LastSeenUtc, result.LastSeenUtc);
-                Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM findings"));
+                Assert.Equal(1, await RawCountAsync(fixture,
+                    "SELECT COUNT(*) FROM findings WHERE assessment_id = '"
+                    + assessment.AssessmentId.ToString("D") + "'"));
             }
         }
     }
@@ -215,8 +227,7 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var assessment = MakeAssessment();
-            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var assessment = await CreatePairedAsync(db);
 
             var low = MakeFinding(assessment.AssessmentId, "low-class", Severity.Low);
             var medium = MakeFinding(assessment.AssessmentId, "medium-class", Severity.Medium);
@@ -253,8 +264,7 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var assessment = MakeAssessment();
-            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var assessment = await CreatePairedAsync(db);
             var finding = MakeFinding(assessment.AssessmentId, "status-class");
             await db.UpsertFindingAsync(finding);
 
@@ -283,8 +293,7 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var assessment = MakeAssessment();
-            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var assessment = await CreatePairedAsync(db);
             var finding = MakeFinding(assessment.AssessmentId, "evidence-class");
             await db.UpsertFindingAsync(finding);
 
@@ -328,7 +337,7 @@ public sealed class PersistenceTests
 
             Assert.True(await db.VerifyChainAsync());
             Assert.Equal(appended[0].Sequence + 4, appended[^1].Sequence);
-            Assert.Equal(GenesisAuditHash, appended[0].PreviousEventHash);
+            Assert.Equal(ActDatabase.GenesisAuditHash, appended[0].PreviousEventHash);
             for (var index = 1; index < appended.Count; index++)
             {
                 Assert.Equal(appended[index - 1].EventHash, appended[index].PreviousEventHash);
@@ -383,14 +392,13 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var assessment = MakeAssessment();
-            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var assessment = await CreatePairedAsync(db);
 
             for (var index = 0; index < 3; index++)
             {
                 await db.AddAssetAsync(new AssetRecord(
                     Guid.NewGuid(), assessment.AssessmentId, AssetKind.Host, "host-" + index,
-                    "host-" + index + ".lab", [], DateTimeOffset.UtcNow, withinScope: true));
+                    "host-" + index + ".lab", [], DateTimeOffset.UtcNow, WithinScope: true));
             }
 
             var assetId = await FirstAssetIdAsync(fixture);
@@ -436,8 +444,9 @@ public sealed class PersistenceTests
 
             await db.SaveScanMetricsAsync(new ScanMetricsRecord(
                 assessment.AssessmentId, 100, 2, 0, 3, TimeSpan.FromSeconds(600), 4096));
+            var secondAssessment = await CreatePairedAsync(db, "metrics-second");
             await db.SaveScanMetricsAsync(new ScanMetricsRecord(
-                Guid.NewGuid(), 50, 1, 1, 1, TimeSpan.FromSeconds(1200), 2048));
+                secondAssessment.AssessmentId, 50, 1, 1, 1, TimeSpan.FromSeconds(1200), 2048));
 
             var snapshot = await db.DashboardAsync();
             Assert.Equal(2, snapshot.AssessmentsTotal);
@@ -476,8 +485,7 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var assessment = MakeAssessment();
-            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var assessment = await CreatePairedAsync(db);
 
             await db.SaveScanMetricsAsync(new ScanMetricsRecord(
                 assessment.AssessmentId, 10, 2, 0, 1, TimeSpan.FromSeconds(90), 1024));
@@ -533,9 +541,11 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var scope = MakeScope(Guid.NewGuid());
+            var scheduleScopeId = Guid.NewGuid();
+            var scope = MakeScope(scheduleScopeId, Guid.NewGuid());
             var schedule = new ScheduleDefinition(
-                Guid.NewGuid(), "nightly", scope.ScopeId, "0 3 * * *", ScheduleTriggerKind.Scheduled,
+                ScheduleId: Guid.NewGuid(), Name: "nightly", ScopeId: scheduleScopeId,
+                CronExpression: "0 3 * * *", Trigger: ScheduleTriggerKind.Scheduled,
                 Enabled: true, CreatedUtc: DateTimeOffset.UtcNow, LastRunUtc: null);
             await db.SaveScheduleAsync(schedule);
 
@@ -553,7 +563,11 @@ public sealed class PersistenceTests
 
             var updated = schedule with { CronExpression = "30 4 * * *" };
             await db.SaveScheduleAsync(updated);
-            Assert.Equal(1, await RawCountAsync(fixture, "SELECT COUNT(*) FROM schedules"));
+            Assert.Equal(1, await RawCountAsync(fixture,
+                "SELECT COUNT(*) FROM schedules WHERE schedule_id = '"
+                + schedule.ScheduleId.ToString("D") + "'"));
+            var reloadedEnabled = await db.ListEnabledSchedulesAsync();
+            Assert.Equal("30 4 * * *", reloadedEnabled[0].CronExpression);
 
             await Assert.ThrowsAsync<ActException>(() =>
                 db.MarkScheduleRanAsync(Guid.NewGuid(), DateTimeOffset.UtcNow));
@@ -599,8 +613,7 @@ public sealed class PersistenceTests
         await using (fixture)
         {
             var db = fixture.Database;
-            var assessment = MakeAssessment();
-            await db.CreateAssessmentAsync(assessment, MakeScope(assessment.AssessmentId));
+            var assessment = await CreatePairedAsync(db);
             var finding = MakeFinding(assessment.AssessmentId, "regression-class");
             await db.UpsertFindingAsync(finding);
 

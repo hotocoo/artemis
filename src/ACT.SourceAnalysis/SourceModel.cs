@@ -1,6 +1,8 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 
+using ACT.Contracts;
+
 namespace ACT.SourceAnalysis;
 
 /// <summary>Programming-language classification used to select which source rules apply to a file.</summary>
@@ -73,6 +75,22 @@ public sealed record RepositoryAnalysisLimits
     /// <summary>Shared default limits instance.</summary>
     public static RepositoryAnalysisLimits Default { get; } = new();
 }
+
+/// <summary>A declarative source-analysis rule: one compiled pattern plus honest metadata.</summary>
+public sealed record SourceRule(
+    string RuleId,
+    string Title,
+    string WhyItMatters,
+    RemediationGuidance Remediation,
+    string FindingClass,
+    Severity Severity,
+    ConfidenceLevel Confidence,
+    bool ExploitabilityIndicator,
+    IReadOnlyList<SourceLanguage> Languages,
+    int MaxMatchesPerFile,
+    System.Text.RegularExpressions.Regex Pattern,
+    bool RedactMatches = false,
+    Func<string, bool>? MatchValidator = null);
 
 /// <summary>One numbered line produced by lazy, encoding-tolerant streaming of a source file.</summary>
 public readonly record struct FileLine(int Number, string Text);

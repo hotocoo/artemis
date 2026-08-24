@@ -1,4 +1,5 @@
 
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using Xunit;
@@ -24,7 +25,7 @@ public sealed class LabFixture : IAsyncLifetime
         var info = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = $"run --no-build --project "{projectDir}" -- --port {port} --lab-token e2e-lab-token",
+            Arguments = "run --no-build --project " + (char)34 + projectDir + (char)34 + " -- --port " + port + " --lab-token e2e-lab-token",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false

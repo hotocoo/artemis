@@ -23,9 +23,9 @@ public static class ArtemisComposition
         {
             var configuration = sp.GetRequiredService<IConfiguration>();
             var rawPath = configuration["Act:Storage:DatabasePath"] ?? "artemis.db";
-            var databasePath = Path.IsPathRooted(raw)
-                ? raw
-                : Path.Combine(AppContext.BaseDirectory, raw);
+            var databasePath = Path.IsPathRooted(rawPath)
+                ? rawPath
+                : Path.Combine(AppContext.BaseDirectory, rawPath);
             var walEnabled = !string.Equals(configuration["Act:Storage:WalEnabled"], "false", StringComparison.OrdinalIgnoreCase);
             return new ActDatabase(databasePath, new StorageOptions { DatabasePath = databasePath, WalEnabled = walEnabled });
         });
@@ -37,13 +37,10 @@ public static class ArtemisComposition
     public static IServiceCollection AddArtemisPolicy(this IServiceCollection services)
     {
         services.AddSingleton<EmergencyStop>();
-        services.AddSingleton<IPolicyEvaluator>(sp =>
-            new ScopePolicyEvaluator(
-                PermissionRequirement.OutboundNetworkToLocalTargets |
-                PermissionRequirement.ReadRepositoryFiles |
-                PermissionRequirement.ReadLocalDatabase |
-                PermissionRequirement.UseProvidedTestCredentials,
-                allowActiveChecks: true));
+        services.AddSingleton<IPolicyEvaluator>(sp => new ScopePolicyEvaluator(
+            sp.GetRequiredService<EmergencyStop>(),
+            ScopePolicyEvaluator.AllPermissions,
+            allowActiveChecks: true));
         services.AddSingleton<ICheckGate, PolicyGateAdapter>();
         return services;
     }
@@ -56,19 +53,15 @@ public static class ArtemisComposition
 }
 
 /// <summary>Initializes the SQLite schema at host start so commands never race migrations.</summary>
-public sealed class DatabaseInitializationService(ActDatabase database, ILogger<DatabaseInitializationService> logger) : IHostedLifecycleService
+public sealed class DatabaseInitializationService(ActDatabase database, ILogger<DatabaseInitializationService> logger) : IHostedService
 {
-    public Task StartingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    public async Task StartedAsync(CancellationToken cancellationToken)
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
         await database.InitializeAsync(cancellationToken);
         logger.LogInformation("Artemis database initialized");
     }
 
-    public Task StoppingAsync(CancellationToken cancellationToken) => Task.CompletedTask;
-
-    public Task StoppedAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
 /// <summary>Bridges policy verdicts into the engine's gate abstraction.</summary>
@@ -137,5 +130,5 @@ public sealed class DatabaseRecorder(ActDatabase database, ILogger<DatabaseRecor
         database.RecordCheckRunAsync(result, assessmentId, cancellationToken);
 
     public Task SetAssessmentStateAsync(Guid assessmentId, AssessmentRunState state, CancellationToken cancellationToken) =>
-        database.UpdateAssessmentStateAsync(assessmentId, state.ToString(), cancellationToken);
+        database.UpdateAssessmentStateAsync(assessmentId, state, cancellationToken);
 }

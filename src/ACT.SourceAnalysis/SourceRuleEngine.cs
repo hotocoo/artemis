@@ -34,7 +34,7 @@ public sealed class SourceRuleEngine
         var applicable = new List<SourceRule>();
         foreach (var rule in _rules)
         {
-            if (rule.Languages is null || rule.Languages.Contains(file.Language))
+            if (rule.Languages is null || rule.Languages.Count == 0 || rule.Languages.Contains(file.Language))
             {
                 applicable.Add(rule);
             }

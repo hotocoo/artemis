@@ -182,7 +182,7 @@ public sealed class ManifestParser
                 $"JSON parse failed for '{path}': {ex.Message}");
         }
 
-        await using (document.ConfigureAwait(false))
+        using (document)
         {
             return kind == "packages.lock.json"
                 ? ParsePackagesLock(document.RootElement, path)
@@ -559,27 +559,29 @@ public sealed class ManifestParser
 
     private static string? ExtractInlineTomlVersion(string inlineTable)
     {
-        const string Key = "\"version\"";
-        var keyIndex = inlineTable.IndexOf(Key, StringComparison.Ordinal);
-        if (keyIndex < 0)
+        // Matches both { version = "1.2.3" } and { "version": "1.2.3" } forms.
+        foreach (var form in new[] { "version =", "\"version\":" })
         {
-            return null;
+            var keyIndex = inlineTable.IndexOf(form, StringComparison.Ordinal);
+            if (keyIndex < 0)
+            {
+                continue;
+            }
+
+            var openQuote = inlineTable.IndexOf('"', keyIndex + form.Length);
+            if (openQuote < 0)
+            {
+                continue;
+            }
+
+            var closeQuote = inlineTable.IndexOf('"', openQuote + 1);
+            if (closeQuote > openQuote)
+            {
+                return inlineTable[(openQuote + 1)..closeQuote];
+            }
         }
 
-        var colon = inlineTable.IndexOf(':', keyIndex + Key.Length);
-        if (colon < 0)
-        {
-            return null;
-        }
-
-        var openQuote = inlineTable.IndexOf('"', colon + 1);
-        if (openQuote < 0)
-        {
-            return null;
-        }
-
-        var closeQuote = inlineTable.IndexOf('"', openQuote + 1);
-        return closeQuote < 0 ? null : inlineTable[(openQuote + 1)..closeQuote];
+        return null;
     }
 
     private static string? ExtractFirstVersionToken(string? requestedRange)

@@ -121,6 +121,14 @@ public sealed class RepositoryWalker
                 }
 
                 var fileInfo = (FileInfo)child;
+                var fileResolution = ResolveWithinRoot(fileInfo, visitedTargets);
+                if (!fileResolution.Success)
+                {
+                    Counters.IncrementSymlinkEscapes();
+                    yield return new SymlinkEscapeObservation(childRelative, fileResolution.TargetPath);
+                    continue;
+                }
+
                 long length;
                 try
                 {

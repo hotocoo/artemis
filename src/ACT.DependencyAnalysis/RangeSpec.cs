@@ -98,8 +98,8 @@ public sealed record RangeSpec
             string rest;
             if (part.StartsWith(">=", StringComparison.Ordinal)) { op = 'G'; rest = part[2..]; }
             else if (part.StartsWith("<=", StringComparison.Ordinal)) { op = 'L'; rest = part[2..]; }
-            else if (part.StartsWith('>', StringComparison.Ordinal)) { op = '>'; rest = part[1..]; }
-            else if (part.StartsWith('<', StringComparison.Ordinal)) { op = '<'; rest = part[1..]; }
+            else if (part.StartsWith('>')) { op = '>'; rest = part[1..]; }
+            else if (part.StartsWith('<')) { op = '<'; rest = part[1..]; }
             else
             {
                 op = '=';
@@ -118,7 +118,7 @@ public sealed record RangeSpec
             clauses.Add(new Clause(op, bound));
         }
 
-        return new RangeSpec(clauses.ToArray);
+        return new RangeSpec(clauses.ToArray());
     }
 
     /// <summary>Decides whether the given version falls inside this range; unparseable versions fail closed.</summary>
