@@ -30,6 +30,7 @@ public static class CommandRegistry
         Register("report", ReportCommands.Run);
         Register("regression", RegressionCommands.Run);
         Register("feed", FeedCommands.Run);
+        Register("schedule", ScheduleCommands.Run);
     }
 
     public static void Register(string name, CommandHandler handler) => Commands[name] = handler;
@@ -66,6 +67,7 @@ public static class HelpPrinter
         "report" => "generate JSON/CSV/Markdown/HTML/SARIF reports",
         "regression" => "replay machine-executable regression tests",
         "feed" => "refresh advisory feed state (stale data is labeled)",
+        "schedule" => "list, add, enable, disable schedules and run due ticks",
         _ => ""
     };
 }

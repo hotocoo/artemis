@@ -119,3 +119,54 @@ public sealed class CronSchedule
     public bool IsDue(DateTimeOffset lastRunLocal, DateTimeOffset nowLocal) =>
         lastRunLocal == DateTimeOffset.MinValue || NextOccurrence(lastRunLocal) <= nowLocal;
 }
+
+/// <summary>Honest per-schedule outcome of one ticker evaluation.</summary>
+public enum ScheduleDueState
+{
+    /// <summary>The schedule fires at or before the evaluated instant.</summary>
+    Due,
+
+    /// <summary>The next occurrence is still in the future.</summary>
+    NotDue,
+
+    /// <summary>The stored expression does not parse; the host must surface this instead of silently ignoring it.</summary>
+    InvalidExpression
+}
+
+/// <summary>One schedule's relationship to a single tick instant.</summary>
+public sealed record ScheduleDueDecision(ScheduleDefinition Schedule, ScheduleDueState State);
+
+/// <summary>
+/// Pure due-selection over a snapshot of enabled schedules. Hosts own persistence and execution;
+/// this type owns only the deterministic "which schedules fire now" decision, so it stays unit
+/// testable and free of I/O. Cron fields are local-time semantics; callers pass instants already
+/// converted to the operator's local zone.
+/// </summary>
+public static class ScheduleTicker
+{
+    /// <summary>Evaluates every given schedule against one local instant, preserving input order.</summary>
+    public static IReadOnlyList<ScheduleDueDecision> Evaluate(
+        IReadOnlyList<ScheduleDefinition> enabledSchedules,
+        DateTimeOffset nowLocal)
+    {
+        ArgumentNullException.ThrowIfNull(enabledSchedules);
+        var decisions = new List<ScheduleDueDecision>(enabledSchedules.Count);
+        foreach (var schedule in enabledSchedules)
+        {
+            if (!CronSchedule.TryParse(schedule.CronExpression, out var cron))
+            {
+                decisions.Add(new ScheduleDueDecision(schedule, ScheduleDueState.InvalidExpression));
+                continue;
+            }
+
+            // A schedule that never ran is immediately due; otherwise compare against the first
+            // occurrence strictly after the recorded local run time.
+            var lastRunLocal = schedule.LastRunUtc?.ToLocalTime() ?? DateTimeOffset.MinValue;
+            decisions.Add(new ScheduleDueDecision(
+                schedule,
+                cron.IsDue(lastRunLocal, nowLocal) ? ScheduleDueState.Due : ScheduleDueState.NotDue));
+        }
+
+        return decisions;
+    }
+}

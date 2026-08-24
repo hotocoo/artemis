@@ -54,7 +54,7 @@ public static class ApiSurfaceParser
 
         var isSwagger2 = root.TryGetProperty("swagger", out var swaggerProp) &&
                          swaggerProp.GetString()?.StartsWith("2", StringComparison.Ordinal) == true;
-        var isOpenApi3 = root.TryGetProperty("openapi", out _) ;
+        var isOpenApi3 = root.TryGetProperty("openapi", out _);
         if (!isSwagger2 && !isOpenApi3)
         {
             throw ActException.FailClosed(ErrorCategory.Parser,

@@ -64,7 +64,7 @@ public sealed partial class HstsCheck : HttpHeaderCheckBase
                 remediation: new RemediationGuidance(
                     "Send an HSTS header on every HTTPS response.",
                     ["Add 'Strict-Transport-Security: max-age=31536000; includeSubDomains' to all HTTPS responses.", "Roll out gradually with a short max-age before committing to a long one."],
-                    ["OWASP Secure Headers Project - HTTP Strict Transport Security", "RFC 6797"])));            CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
+                    ["OWASP Secure Headers Project - HTTP Strict Transport Security", "RFC 6797"]))); CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
                 EvidenceKind.HttpHeaders, "strict-transport-security", "<absent>", response.Correlation);
         }
         else if (!TryParseMaxAge(header, out var maxAge))
@@ -79,7 +79,7 @@ public sealed partial class HstsCheck : HttpHeaderCheckBase
                 remediation: new RemediationGuidance(
                     "Correct the HSTS header syntax.",
                     ["Emit exactly 'Strict-Transport-Security: max-age=<seconds>[; includeSubDomains]' with a numeric max-age."],
-                    ["OWASP Secure Headers Project - HTTP Strict Transport Security", "RFC 6797"])));            CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
+                    ["OWASP Secure Headers Project - HTTP Strict Transport Security", "RFC 6797"]))); CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
                 EvidenceKind.HttpHeaders, "strict-transport-security", header, response.Correlation);
         }
         else if (maxAge < MinimumMaxAgeSeconds)
@@ -94,7 +94,7 @@ public sealed partial class HstsCheck : HttpHeaderCheckBase
                 remediation: new RemediationGuidance(
                     "Raise the HSTS max-age.",
                     ["Increase max-age to at least 2592000 seconds once rollout stability is confirmed."],
-                    ["OWASP Secure Headers Project - HTTP Strict Transport Security"])));            CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
+                    ["OWASP Secure Headers Project - HTTP Strict Transport Security"]))); CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
                 EvidenceKind.HttpHeaders, "strict-transport-security", header, response.Correlation);
         }
 

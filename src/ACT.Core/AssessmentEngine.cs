@@ -77,11 +77,13 @@ public sealed class AssessmentEngine(
                     lock (results) results.Add(result);
                     await recorder.RecordCheckRunAsync(result, request.AssessmentId, token);
 
-                    if (result.StandaloneEvidence.Count > 0)
-                    {
-                        await recorder.RecordEvidenceBatchAsync(result.StandaloneEvidence, token);
-                    }
-
+                    // Findings are persisted BEFORE their standalone evidence: evidence rows carry a
+                    // foreign key into findings, and deduplication may replace a check-emitted
+                    // finding id with the surviving finding's id. Each evidence item is remapped to
+                    // the persisted identity of its parent finding; only evidence whose parent was
+                    // never upserted would be orphaned, and that cannot happen because Merge always
+                    // yields exactly one surviving finding per emitted one.
+                    var persistedIds = new Dictionary<Guid, Guid>();
                     foreach (var finding in result.Findings)
                     {
                         var outcome = deduplicator.Merge(finding);
@@ -89,9 +91,29 @@ public sealed class AssessmentEngine(
                             ? outcome.Finding
                             : outcome.Finding with { PriorityScore = scorer.Score(outcome.Finding) };
                         await recorder.UpsertFindingAsync(scored, token);
+                        persistedIds[finding.FindingId] = scored.FindingId;
                         await auditSink.AppendAsync(new AuditDraft("engine", "finding.created",
                             "finding", scored.FindingId.ToString(),
                             scored.TechnicalSeverity.ToString(), request.Correlation), token);
+                    }
+
+                    if (result.StandaloneEvidence.Count > 0)
+                    {
+                        var persistable = new List<Contracts.EvidenceItem>(result.StandaloneEvidence.Count);
+                        foreach (var evidenceItem in result.StandaloneEvidence)
+                        {
+                            if (persistedIds.TryGetValue(evidenceItem.FindingId, out var persistedFindingId))
+                            {
+                                persistable.Add(persistedFindingId == evidenceItem.FindingId
+                                    ? evidenceItem
+                                    : evidenceItem with { FindingId = persistedFindingId });
+                            }
+                        }
+
+                        if (persistable.Count > 0)
+                        {
+                            await recorder.RecordEvidenceBatchAsync(persistable, token);
+                        }
                     }
                 }
                 finally

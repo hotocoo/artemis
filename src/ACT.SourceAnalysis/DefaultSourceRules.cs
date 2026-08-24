@@ -168,9 +168,14 @@ public static class DefaultSourceRules
     private static Regex Rx(params string[] alternatives)
     {
         var pattern = string.Join("|", alternatives);
+        // The per-match budget is ReDoS defense-in-depth, not a performance bound: every shipped
+        // rule is linear and evaluates in microseconds. The budget stays at one full second so a
+        // JIT warm-up, GC pause, or scheduler stall on a loaded host cannot spuriously disable an
+        // honest rule (a genuinely catastrophic pattern still trips it long before any budget in
+        // RepositoryAnalysisLimits could be consumed).
         return new Regex(pattern,
             RegexOptions.Compiled | RegexOptions.CultureInvariant,
-            matchTimeout: TimeSpan.FromMilliseconds(100));
+            matchTimeout: TimeSpan.FromSeconds(1));
     }
 
     private static IReadOnlyList<SourceLanguage> Lang(params SourceLanguage[] languages) => languages;

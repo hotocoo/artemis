@@ -74,11 +74,17 @@ public static class FindingCommands
                 human.Length == 0 ? "no findings stored" : human,
                 JsonSerializer.Serialize(rows.Select(f => new
                 {
-                    f.FindingId, title = f.Title, severity = f.TechnicalSeverity.ToString(),
-                    confidence = f.Confidence.ToString(), priorityScore = Math.Round(f.PriorityScore, 1),
-                    status = f.Status.ToString(), category = f.Category.ToString(),
-                    target = f.TargetDisplay, fingerprint = f.Fingerprint.Hash,
-                    firstSeenUtc = f.FirstSeenUtc, lastSeenUtc = f.LastSeenUtc
+                    f.FindingId,
+                    title = f.Title,
+                    severity = f.TechnicalSeverity.ToString(),
+                    confidence = f.Confidence.ToString(),
+                    priorityScore = Math.Round(f.PriorityScore, 1),
+                    status = f.Status.ToString(),
+                    category = f.Category.ToString(),
+                    target = f.TargetDisplay,
+                    fingerprint = f.Fingerprint.Hash,
+                    firstSeenUtc = f.FirstSeenUtc,
+                    lastSeenUtc = f.LastSeenUtc
                 }), JsonOpts.Indented));
         }
 

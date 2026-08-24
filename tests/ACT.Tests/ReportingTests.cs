@@ -78,7 +78,7 @@ public class ReportFormattingTests
         regressionTestId,
         CvssVector: null,
         CvssBaseScore: null)
-    { PriorityScore = priority };
+        { PriorityScore = priority };
 
     private static string ComputeFingerprint(string check, string target, string findingClass) =>
         FindingFingerprinter.Fingerprint(new FingerprintComponents(CheckId.From(check), target, "", findingClass)).Hash;

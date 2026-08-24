@@ -192,6 +192,12 @@ public static class ArtemisHostFactory
             });
         });
 
+        // Components with primary constructors (e.g. AssessmentEngine) request the non-generic
+        // ILogger, which AddLogging does not register by itself. Alias it through the factory so
+        // every consumer shares one configured pipeline instead of failing activation.
+        services.AddSingleton<ILogger>(sp =>
+            sp.GetRequiredService<ILoggerFactory>().CreateLogger("Artemis"));
+
         return services;
     }
 }

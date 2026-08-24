@@ -64,7 +64,7 @@ public sealed partial class CspCheck : HttpHeaderCheckBase
                 remediation: new RemediationGuidance(
                     "Define a restrictive Content-Security-Policy for HTML responses.",
                     ["Start with 'default-src \'self\'' and add only the origins the application truly needs.", "Prefer nonce- or hash-based script-src over unsafe-inline."],
-                    ["OWASP Secure Headers Project - Content Security Policy", "MDN Content-Security-Policy guide"])));            CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
+                    ["OWASP Secure Headers Project - Content Security Policy", "MDN Content-Security-Policy guide"]))); CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
                 EvidenceKind.HttpHeaders, "content-security-policy", "<absent>", response.Correlation);
         }
         else if (AllowsInlineScripts(policy))
@@ -79,7 +79,7 @@ public sealed partial class CspCheck : HttpHeaderCheckBase
                 remediation: new RemediationGuidance(
                     "Replace unsafe-inline with nonce- or hash-based script sources.",
                     ["Generate a per-response nonce and add it to every script element.", "Alternatively pin known inline scripts with sha256/sha384/sha512 hashes."],
-                    ["OWASP Secure Headers Project - Content Security Policy"])));            CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
+                    ["OWASP Secure Headers Project - Content Security Policy"]))); CollectEvidence(evidence, context.Assessment, findings[0].FindingId,
                 EvidenceKind.HttpHeaders, "content-security-policy", policy, response.Correlation);
         }
 

@@ -30,6 +30,7 @@ public static class ArtemisComposition
             return new ActDatabase(databasePath, new StorageOptions { DatabasePath = databasePath, WalEnabled = walEnabled });
         });
         services.AddSingleton<IAssessmentRecorder, DatabaseRecorder>();
+        services.AddSingleton<IAuditSink>(sp => new DatabaseAuditSink(sp.GetRequiredService<ActDatabase>()));
         services.AddHostedService<DatabaseInitializationService>();
         return services;
     }

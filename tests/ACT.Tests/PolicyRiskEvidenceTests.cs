@@ -301,16 +301,16 @@ public class PolicyRiskEvidenceTests
         var severities = new[] { Severity.Informational, Severity.Low, Severity.Medium, Severity.High, Severity.Critical };
         var confidences = new[] { ConfidenceLevel.Low, ConfidenceLevel.Medium, ConfidenceLevel.High };
         foreach (var severity in severities)
-        foreach (var confidence in confidences)
-        {
-            var input = new RiskInput(severity, confidence, false, false, false, false, BusinessImpactLevel.Unknown);
-            var previous = DeterministicRiskScorer.Score(input);
-            Assert.InRange(previous, 0, 100);
-            Assert.True(DeterministicRiskScorer.Score(input with { ExploitabilityIndicator = true }) >= previous);
-            Assert.True(DeterministicRiskScorer.Score(input with { ExposedToNetwork = true }) >= previous);
-            Assert.True(DeterministicRiskScorer.Score(input with { Recurring = true }) >= previous);
-            Assert.True(DeterministicRiskScorer.Score(input with { RemediationAvailable = true }) >= previous);
-        }
+            foreach (var confidence in confidences)
+            {
+                var input = new RiskInput(severity, confidence, false, false, false, false, BusinessImpactLevel.Unknown);
+                var previous = DeterministicRiskScorer.Score(input);
+                Assert.InRange(previous, 0, 100);
+                Assert.True(DeterministicRiskScorer.Score(input with { ExploitabilityIndicator = true }) >= previous);
+                Assert.True(DeterministicRiskScorer.Score(input with { ExposedToNetwork = true }) >= previous);
+                Assert.True(DeterministicRiskScorer.Score(input with { Recurring = true }) >= previous);
+                Assert.True(DeterministicRiskScorer.Score(input with { RemediationAvailable = true }) >= previous);
+            }
     }
 
     // ---------- CVSS-v4-style estimator ----------

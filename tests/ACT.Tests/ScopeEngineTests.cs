@@ -116,6 +116,24 @@ public class ScopeEngineTests
     }
 
     [Fact]
+    public void FilesystemPathsCompileForRepositoryScopes()
+    {
+        // Regression: the CIDR branch matched any entry containing a slash, so an absolute path
+        // was misread as an unparseable network range and repository scopes could never compile.
+        var matchers = CompiledScope.ParseEntry("/Users/dev/work/service", TargetTypeKind.LocalSourceRepository);
+        var repository = Assert.Single(matchers.OfType<LocalRepositoryMatcher>());
+        Assert.Equal("/Users/dev/work/service", repository.RootPath);
+    }
+
+    [Fact]
+    public void FilesystemPathsStayForbiddenOutsideLocalTargetKinds()
+    {
+        var ex = Assert.Throws<ActException>(() =>
+            CompiledScope.ParseEntry("/Users/dev/work/service", TargetTypeKind.Hostname));
+        Assert.Equal(ErrorCategory.Scope, ex.Category);
+    }
+
+    [Fact]
     public void LocalhostEntryCoversLoopbackNamesAndAddresses()
     {
         var matchers = CompiledScope.ParseEntry("localhost", TargetTypeKind.Localhost);

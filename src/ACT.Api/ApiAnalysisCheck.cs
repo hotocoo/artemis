@@ -158,7 +158,7 @@ public sealed class ApiSurfaceAnalysisCheck : ISecurityCheck
         }
 
         evidence.Add(context.Assessment.Evidence.Create(
-            Guid.Empty, EvidenceKind.ConfigurationLocation, "openapi.operations", 
+            Guid.Empty, EvidenceKind.ConfigurationLocation, "openapi.operations",
             surface.Operations.Count.ToString(), Metadata.Id, CorrelationId.New(),
             new Dictionary<string, string>
             {

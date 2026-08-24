@@ -62,7 +62,7 @@ public sealed class CorsCheck : HttpHeaderCheckBase
                     remediation: new RemediationGuidance(
                         "Restrict CORS to an explicit allowlist of origins.",
                         ["Echo only vetted origins from configuration instead of '*'.", "Keep Vary: Origin so caches never serve mismatched ACAO values."],
-                        ["OWASP Cross-Origin Resource Sharing Cheat Sheet"])));                CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
+                        ["OWASP Cross-Origin Resource Sharing Cheat Sheet"]))); CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
                     EvidenceKind.HttpHeaders, "access-control-allow-origin", allowOrigin, response.Correlation);
             }
             else
@@ -77,7 +77,7 @@ public sealed class CorsCheck : HttpHeaderCheckBase
                     remediation: new RemediationGuidance(
                         "Scope CORS to origins that genuinely need access.",
                         ["Replace '*' with an explicit origin allowlist."],
-                        ["OWASP Cross-Origin Resource Sharing Cheat Sheet"])));                CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
+                        ["OWASP Cross-Origin Resource Sharing Cheat Sheet"]))); CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
                     EvidenceKind.HttpHeaders, "access-control-allow-origin", allowOrigin, response.Correlation);
             }
         }
@@ -108,7 +108,7 @@ public sealed class CorsCheck : HttpHeaderCheckBase
                 remediation: new RemediationGuidance(
                     "Validate origins against an explicit allowlist before echoing.",
                     ["Compare the request Origin against configured trusted origins and deny all others.", "Never reflect the Origin header verbatim."],
-                    ["OWASP Cross-Origin Resource Sharing Cheat Sheet"])));            CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
+                    ["OWASP Cross-Origin Resource Sharing Cheat Sheet"]))); CollectEvidence(evidence, context.Assessment, findings[^1].FindingId,
                 EvidenceKind.HttpResponseMetadata, "reflected_probe_origin", ProbeOrigin, response.Correlation);
         }
 
