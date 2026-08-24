@@ -158,7 +158,7 @@ public static class ScheduleCommands
         var outcomes = await ScheduledExecutionHost.TickOnceAsync(services);
         var failed = outcomes.Count(o => o.State is ScheduledRunState.ExecutionFailed
             or ScheduledRunState.MissingScope or ScheduledRunState.ScopeRejected
-            or ScheduledRunState.InvalidExpression);
+            or ScheduledRunState.InvalidExpression or ScheduledRunState.MaintenanceFailed);
 
         var text = new StringBuilder();
         text.AppendLine($"tick complete: {outcomes.Count} due schedule(s), {failed} failed");

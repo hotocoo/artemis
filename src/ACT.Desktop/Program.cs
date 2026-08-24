@@ -264,6 +264,17 @@ internal static class Pages
 
         checks.Add(("Filesystem", ProbeWritableDirectory(AppContext.BaseDirectory), "Application directory writable probe."));
 
+        var preview = await new RetentionSweeper(db).PreviewAsync();
+        var pending = preview.Sum(row => row.ExpiredCount);
+        var lastSweep = await db.GetConfigAsync<RetentionMaintenance.AutoSweepStamp>(RetentionMaintenance.LastSweepKey);
+        checks.Add(("Evidence retention", true,
+            pending > 0
+                ? pending + " evidence item(s) past their configured window; the ticking host sweeps them "
+                    + "(throttled, skipped while an emergency stop is armed). Last automatic sweep: "
+                    + (lastSweep?.SweptUtc.ToString("u") ?? "never") + "."
+                : "All evidence within its scope-configured window. Last automatic sweep: "
+                    + (lastSweep?.SweptUtc.ToString("u") ?? "never") + "."));
+
         var rows = string.Join("", checks.Select(c =>
             "<tr><td>" + Esc(c.Name) + "</td><td>" + (c.Ok ? "OK" : "DEGRADED") + "</td><td>" + Esc(c.Detail) + "</td></tr>"));
         var body = "<h1>System Health</h1>" +

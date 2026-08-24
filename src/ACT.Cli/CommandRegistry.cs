@@ -31,6 +31,7 @@ public static class CommandRegistry
         Register("regression", RegressionCommands.Run);
         Register("feed", FeedCommands.Run);
         Register("schedule", ScheduleCommands.Run);
+        Register("retention", RetentionCommands.Run);
     }
 
     public static void Register(string name, CommandHandler handler) => Commands[name] = handler;
@@ -68,6 +69,7 @@ public static class HelpPrinter
         "regression" => "replay machine-executable regression tests",
         "feed" => "refresh advisory feed state (stale data is labeled)",
         "schedule" => "list, add, enable, disable schedules and run due ticks",
+        "retention" => "preview and sweep evidence past scope-configured retention windows",
         _ => ""
     };
 }

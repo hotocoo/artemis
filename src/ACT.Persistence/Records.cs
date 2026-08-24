@@ -39,3 +39,26 @@ public sealed record FeedVersionRecord(
     string MetadataHash,
     bool IsCurrent,
     string Note);
+
+/// <summary>
+/// One scope's evidence-retention outlook: its configured window, the cutoff that window implies
+/// right now, and how many of its stored evidence rows have already outlived it.
+/// </summary>
+public sealed record RetentionPreviewRow(
+    Guid ScopeId,
+    TimeSpan RetentionPeriod,
+    DateTimeOffset CutoffUtc,
+    long ExpiredCount);
+
+/// <summary>What one sweep removed for a single scope under that scope's own configured window.</summary>
+public sealed record RetentionScopeDeletion(
+    Guid ScopeId,
+    TimeSpan RetentionPeriod,
+    long DeletedCount);
+
+/// <summary>The outcome of one retention sweep, honest down to zero deletions.</summary>
+public sealed record RetentionSweepResult(
+    long TotalDeleted,
+    IReadOnlyList<RetentionScopeDeletion> Scopes,
+    bool SecureWipe,
+    DateTimeOffset SweptAtUtc);
