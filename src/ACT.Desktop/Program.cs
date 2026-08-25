@@ -95,6 +95,9 @@ app.MapGet("/baselines/compare", async (IServiceProvider sp, Guid assessment) =>
     await Pages.BaselineCompare(sp, assessment));
 app.MapPost("/baselines/create", async (IServiceProvider sp, HttpRequest request) =>
     await Pages.BaselineCreate(sp, request));
+app.MapGet("/reports", async (IServiceProvider sp) => await Pages.Reports(sp));
+app.MapGet("/reports/{assessment}/report.{format}", async (IServiceProvider sp, Guid assessment, string format) =>
+    await Pages.ReportDownload(sp, assessment, format));
 app.MapGet("/audit", async (IServiceProvider sp, string? action, int? limit) => await Pages.Audit(sp, action, limit));
 app.MapGet("/schedules", async (IServiceProvider sp) => await Pages.Schedules(sp));
 app.MapGet("/config", (IServiceProvider sp) => Pages.Config(sp));
@@ -505,6 +508,91 @@ internal static class Pages
         catch (ActException ex)
         {
             return Results.Redirect("/baselines?error=" + Uri.EscapeDataString(ex.SafeMessage), permanent: false);
+        }
+    }
+
+
+    /// <summary>
+    /// Reports: every stored assessment renders into any supported format from persisted rows
+    /// only. Generation is audited exactly like on the CLI - a report handed to an auditor or a
+    /// CI gate is part of the assessment lifecycle, not a private view.
+    /// </summary>
+    public static async Task<IResult> Reports(IServiceProvider sp)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+        var assessments = await db.ListAssessmentsAsync(50);
+
+        var b = new StringBuilder();
+        b.Append("<h1>Reports</h1>");
+        b.Append("<p>Each report is assembled strictly from persisted rows and rendered deterministically ")
+            .Append("per format (JSON, CSV, Markdown, HTML, SARIF 2.1). Every generation - here or via ")
+            .Append("<code>artemis report generate</code> - lands in the hash-chained audit log as ")
+            .Append("<code>report.generated</code>. Absence of findings never implies absence of vulnerabilities.</p>");
+
+        if (assessments.Count == 0)
+        {
+            b.Append("<p>No assessments stored yet. Start one with <code>artemis assessment start --scope my-scope.json</code>.</p>");
+        }
+        else
+        {
+            var labels = new Dictionary<ReportFormat, string>
+            {
+                [ReportFormat.Json] = "JSON",
+                [ReportFormat.Csv] = "CSV",
+                [ReportFormat.Markdown] = "Markdown",
+                [ReportFormat.Html] = "HTML",
+                [ReportFormat.Sarif] = "SARIF"
+            };
+            var formats = new[] { ReportFormat.Json, ReportFormat.Csv, ReportFormat.Markdown, ReportFormat.Html, ReportFormat.Sarif };
+
+            var rows = new StringBuilder();
+            foreach (var a in assessments)
+            {
+                rows.Append("<tr>");
+                rows.Append("<td><a href=\"/findings?assessment=").Append(a.AssessmentId).Append("\">")
+                    .Append(Esc(a.Name)).Append("</a></td>");
+                rows.Append("<td>").Append(Esc(a.State)).Append("</td>");
+                rows.Append("<td>").Append(Esc(a.Organization)).Append("</td>");
+                rows.Append("<td>").Append(a.CreatedUtc.ToLocalTime().ToString("u")).Append("</td>");
+                rows.Append("<td>");
+                for (var i = 0; i < formats.Length; i++)
+                {
+                    if (i > 0) rows.Append(" &#183; ");
+                    rows.Append("<a href=\"/reports/").Append(a.AssessmentId).Append("/report.")
+                        .Append(ReportOperations.Extension(formats[i])).Append("\">")
+                        .Append(Esc(labels[formats[i]])).Append("</a>");
+                }
+
+                rows.Append("</td></tr>");
+            }
+
+            b.Append("<table><tr><th>Assessment</th><th>State</th><th>Organization</th><th>Created</th><th>Download</th></tr>")
+                .Append(rows).Append("</table>");
+        }
+
+        return Results.Content(ArtemisConsoleLayout.Render("Reports", "Reports", b.ToString()), "text/html");
+    }
+
+    /// <summary>Serves one audited report generation as a download; refusals stay honest.</summary>
+    public static async Task<IResult> ReportDownload(IServiceProvider sp, Guid assessment, string format)
+    {
+        if (!ReportOperations.TryParseFormat(format, out var parsed))
+        {
+            return Results.NotFound("Unknown report format '" + format + "'. Supported: json, csv, markdown, html, sarif.");
+        }
+
+        var db = sp.GetRequiredService<ActDatabase>();
+        try
+        {
+            var report = await ReportOperations.GenerateAsync(db, assessment, parsed, "operator-console", CorrelationId.New());
+            return Results.File(
+                Encoding.UTF8.GetBytes(report.Content),
+                ReportOperations.ContentType(parsed),
+                ReportOperations.FileName(assessment, parsed));
+        }
+        catch (ActException ex)
+        {
+            return Results.NotFound(ex.SafeMessage);
         }
     }
 
