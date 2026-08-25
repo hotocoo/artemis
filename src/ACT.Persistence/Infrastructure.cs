@@ -364,7 +364,27 @@ internal static class Migrations
     [
         (SchemaV1.Version, SchemaV1.Name, SchemaV1.Checksum(), SchemaV1.Statements),
         (SchemaV2.Version, SchemaV2.Name, SchemaV2.Checksum(), SchemaV2.Statements),
+        (SchemaV3.Version, SchemaV3.Name, SchemaV3.Checksum(), SchemaV3.Statements),
     ];
+}
+
+/// <summary>
+/// The v3 schema: stored replay recipes on regression tests. Frozen once shipped - edits break
+/// deployed databases via checksum mismatch, exactly like v1. A plain nullable column keeps every
+/// earlier row valid without a rewrite; NULL simply means "captured before recipes were stored".
+/// </summary>
+internal static class SchemaV3
+{
+    internal const int Version = 3;
+    internal const string Name = "regression-recipes";
+
+    internal static readonly string[] Statements =
+    [
+        "ALTER TABLE regression_tests ADD COLUMN recipe_json TEXT",
+    ];
+
+    /// <summary>SHA-256 hex checksum of the complete v3 script.</summary>
+    internal static string Checksum() => MigrationScript.Checksum(string.Join(";\n", Statements));
 }
 
 /// <summary>

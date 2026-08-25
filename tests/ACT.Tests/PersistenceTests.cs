@@ -124,13 +124,14 @@ public sealed class PersistenceTests
             var tablesAfterSecond = await RawCountAsync(fixture,
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'");
 
-            Assert.Equal(2, migrationRows);
+            // One row per shipped migration; append to Migrations.Ordered and this number grows.
+            Assert.Equal(3, migrationRows);
             Assert.Equal(tablesAfterFirst, tablesAfterSecond);
         }
     }
 
     [Fact]
-    public async Task Persist_MigrationV2UpgradesV1DatabaseInPlace()
+    public async Task Persist_MigrationChainUpgradesV1DatabaseInPlace()
     {
         var fixture = await CreateDatabaseAsync();
         await using (fixture)
@@ -141,7 +142,8 @@ public sealed class PersistenceTests
             await db.UpsertFindingAsync(finding);
 
             // Rewind the file to a v1 state: drop the triage columns and forget migration 2.
-            // This is exactly what a database written by an older build looks like.
+            // This is exactly what a database written by an older build looks like; re-opening
+            // must reapply every later migration of the chain, in order.
             await using (var connection = new SqliteConnection("Data Source=" + fixture.DatabasePath))
             {
                 await connection.OpenAsync();
@@ -152,8 +154,12 @@ public sealed class PersistenceTests
                     await drop.ExecuteNonQueryAsync();
                 }
 
+                var recipeDrop = connection.CreateCommand();
+                recipeDrop.CommandText = "ALTER TABLE regression_tests DROP COLUMN recipe_json";
+                await recipeDrop.ExecuteNonQueryAsync();
+
                 var forget = connection.CreateCommand();
-                forget.CommandText = "DELETE FROM schema_migrations WHERE version = 2";
+                forget.CommandText = "DELETE FROM schema_migrations WHERE version >= 2";
                 await forget.ExecuteNonQueryAsync();
             }
 
@@ -183,7 +189,7 @@ public sealed class PersistenceTests
                     }
                 }
 
-                Assert.Equal([1, 2], versions);
+                Assert.Equal([1, 2, 3], versions); // the whole chain reapplied in order
 
                 // Pre-existing rows survive untouched; the lifecycle works on them immediately.
                 Assert.Null(await upgraded.GetTriageAsync(finding.FindingId));
@@ -1112,6 +1118,63 @@ public sealed class PersistenceTests
 
             await Assert.ThrowsAsync<ActException>(() =>
                 db.RecordTestRunAsync(Guid.NewGuid(), ranAt, VerificationState.Tested, "orphan"));
+        }
+    }
+
+    [Fact]
+    public async Task Persist_RegressionRecipeRoundTrip_ListingOrder_AndRunHistory()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = await CreatePairedAsync(db);
+            var findingOne = MakeFinding(assessment.AssessmentId, "recipe-class-one");
+            var findingTwo = MakeFinding(assessment.AssessmentId, "recipe-class-two");
+            await db.UpsertFindingAsync(findingOne);
+            await db.UpsertFindingAsync(findingTwo);
+
+            var created = DateTimeOffset.UtcNow.AddDays(-1);
+            var withRecipe = new RegressionTestRecord(
+                Guid.NewGuid(), assessment.AssessmentId, findingOne.FindingId, "verify-cipher",
+                "Re-run cipher check", Severity.High, TimeSpan.FromDays(7), Enabled: true,
+                created, LastRunUtc: null, NextRunUtc: created.AddDays(7),
+                RecipeJson: "{\"title\":\"replay\"}");
+            var legacyRow = new RegressionTestRecord(
+                Guid.NewGuid(), assessment.AssessmentId, findingTwo.FindingId, "manual-only",
+                "Captured before recipes existed", Severity.Medium, TimeSpan.FromDays(30), Enabled: true,
+                created, LastRunUtc: null, NextRunUtc: created.AddDays(30));
+            await db.SaveRegressionTestAsync(withRecipe);
+            await db.SaveRegressionTestAsync(legacyRow);
+
+            // Recipe round-trips; pre-recipe rows read back as null (manual-only), never fabricated.
+            var storedRecipe = await db.GetRegressionTestAsync(withRecipe.RegressionTestId);
+            Assert.NotNull(storedRecipe);
+            Assert.Equal(withRecipe.RecipeJson, storedRecipe.RecipeJson);
+            var storedLegacy = await db.GetRegressionTestAsync(legacyRow.RegressionTestId);
+            Assert.NotNull(storedLegacy);
+            Assert.Null(storedLegacy.RecipeJson);
+
+            // Listing orders enabled tests by next scheduled verification.
+            var listed = await db.ListRegressionTestsAsync(10);
+            Assert.Equal(2, listed.Count);
+            Assert.Equal(withRecipe.RegressionTestId, listed[0].RegressionTestId);
+            Assert.Equal(legacyRow.RegressionTestId, listed[1].RegressionTestId);
+
+            // Disabled rows sort after enabled ones regardless of schedule.
+            await db.SetRegressionTestEnabledAsync(withRecipe.RegressionTestId, false);
+            var reordered = await db.ListRegressionTestsAsync(10);
+            Assert.Equal(legacyRow.RegressionTestId, reordered[0].RegressionTestId);
+
+            // Run history reads newest-first and fails closed for unknown tests.
+            await db.RecordTestRunAsync(withRecipe.RegressionTestId, created.AddHours(1), VerificationState.Tested, "first");
+            await db.RecordTestRunAsync(withRecipe.RegressionTestId, created.AddHours(2), VerificationState.Confirmed, "regressed");
+            var history = await db.ListTestRunsAsync(withRecipe.RegressionTestId, 10);
+            Assert.Equal(2, history.Count);
+            Assert.Equal("regressed", history[0].Detail);
+            Assert.Equal(VerificationState.Confirmed, history[0].Result);
+            await Assert.ThrowsAsync<ActException>(() =>
+                db.SetRegressionTestEnabledAsync(Guid.NewGuid(), true));
         }
     }
 

@@ -70,7 +70,7 @@ public static class HelpPrinter
         "asset" => "list discovered assets with their observed services",
         "baseline" => "create security baselines and compare assessments against them",
         "report" => "generate JSON/CSV/Markdown/HTML/SARIF reports",
-        "regression" => "replay machine-executable regression tests",
+        "regression" => "list, show and replay stored machine-executable regression tests",
         "feed" => "refresh advisory feed state (stale data is labeled)",
         "schedule" => "list, add, enable, disable schedules and run due ticks",
         "retention" => "preview and sweep evidence past scope-configured retention windows",
