@@ -548,6 +548,90 @@ public sealed partial class ActDatabase : IAsyncDisposable
         }, cancellationToken);
     }
 
+    /// <summary>Lists discovered assets, newest first, optionally narrowed to one assessment.</summary>
+    public Task<IReadOnlyList<AssetRecord>> ListAssetsAsync(
+        Guid? assessmentId, int limit, CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            RequirePositive(limit, "limit");
+            if (assessmentId is { } assessment)
+            {
+                command.CommandText = """
+                    SELECT * FROM assets WHERE assessment_id = $assessment
+                    ORDER BY discovered_utc DESC, asset_id LIMIT $limit
+                    """;
+                command.Parameters.AddWithValue("$assessment", assessment.ToString());
+            }
+            else
+            {
+                command.CommandText = "SELECT * FROM assets ORDER BY discovered_utc DESC, asset_id LIMIT $limit";
+            }
+
+            command.Parameters.AddWithValue("$limit", (long)limit);
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var results = new List<AssetRecord>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                results.Add(MapAsset(reader));
+            }
+
+            return (IReadOnlyList<AssetRecord>)results;
+        }, cancellationToken);
+
+    /// <summary>
+    /// Lists observed network services joined through their owning asset so an optional assessment
+    /// filter covers whole assets; newest observation first.
+    /// </summary>
+    public Task<IReadOnlyList<ServiceObservation>> ListServicesAsync(
+        Guid? assessmentId, int limit, CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            RequirePositive(limit, "limit");
+            if (assessmentId is { } assessment)
+            {
+                command.CommandText = """
+                    SELECT s.* FROM services s JOIN assets a ON a.asset_id = s.asset_id
+                    WHERE a.assessment_id = $assessment
+                    ORDER BY s.observed_utc DESC, s.service_id LIMIT $limit
+                    """;
+                command.Parameters.AddWithValue("$assessment", assessment.ToString());
+            }
+            else
+            {
+                command.CommandText = "SELECT * FROM services ORDER BY observed_utc DESC, service_id LIMIT $limit";
+            }
+
+            command.Parameters.AddWithValue("$limit", (long)limit);
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var results = new List<ServiceObservation>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                results.Add(MapService(reader));
+            }
+
+            return (IReadOnlyList<ServiceObservation>)results;
+        }, cancellationToken);
+
+    private static AssetRecord MapAsset(SqliteDataReader row) => new(
+        AssetId: row.GuidOf("asset_id"),
+        AssessmentId: row.GuidOf("assessment_id"),
+        Kind: ActValues.Enum<AssetKind>(row.Str("kind"), "kind"),
+        DisplayName: row.Str("display_name"),
+        CanonicalTarget: row.Str("canonical_target"),
+        ObservedIps: ActJson.Deserialize<List<string>>(row.Str("observed_ips_json"), "observed_ips_json"),
+        DiscoveredAtUtc: row.TimeOf("discovered_utc"),
+        WithinScope: row.BoolOf("within_scope"));
+
+    private static ServiceObservation MapService(SqliteDataReader row) => new(
+        ServiceId: row.GuidOf("service_id"),
+        AssetId: row.GuidOf("asset_id"),
+        Port: (int)row.IntOf("port"),
+        Protocol: ActValues.Enum<ProtocolKind>(row.Str("protocol"), "protocol"),
+        Banner: row.StrOrNull("banner"),
+        TlsNegotiated: row.BoolOf("tls_negotiated"),
+        ObservedAtUtc: row.TimeOf("observed_utc"),
+        SourceCheck: new CheckId(row.Str("source_check")));
+
     // ---------- check runs ----------
 
     /// <summary>Records one executed security check run for the dashboard and run history.</summary>

@@ -58,6 +58,9 @@ public static class FindingCommands
         }
 
         var db = services.GetRequiredService<ActDatabase>();
+        // Read commands own their readiness: no host runs migrations on their behalf, and the
+        // database refuses every query until InitializeAsync has completed at least once.
+        await db.InitializeAsync();
         var globals = services.GetRequiredService<GlobalOptions>();
 
         if (args[0] == "list")

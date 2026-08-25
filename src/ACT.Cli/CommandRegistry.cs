@@ -27,6 +27,7 @@ public static class CommandRegistry
         Register("assessment", AssessmentCommands.Run);
         Register("check", CheckCommand.Run);
         Register("finding", FindingCommands.Run);
+        Register("asset", AssetCommands.Run);
         Register("report", ReportCommands.Run);
         Register("regression", RegressionCommands.Run);
         Register("feed", FeedCommands.Run);
@@ -65,6 +66,7 @@ public static class HelpPrinter
         "assessment" => "create, start, status, emergency stop and disarm assessments",
         "check" => "list built-in security checks",
         "finding" => "list, show, and triage stored findings",
+        "asset" => "list discovered assets with their observed services",
         "report" => "generate JSON/CSV/Markdown/HTML/SARIF reports",
         "regression" => "replay machine-executable regression tests",
         "feed" => "refresh advisory feed state (stale data is labeled)",
