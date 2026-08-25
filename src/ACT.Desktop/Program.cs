@@ -85,6 +85,10 @@ app.MapGet("/findings/{id}", async (IServiceProvider sp, Guid id, string? triage
     await Pages.FindingDetail(sp, id, triaged));
 app.MapPost("/findings/{id}/triage", async (IServiceProvider sp, Guid id, HttpRequest request) =>
     await Pages.Triage(sp, id, request));
+app.MapGet("/regressions", async (IServiceProvider sp) => await Pages.Regressions(sp));
+app.MapPost("/regressions/{id}/toggle", async (IServiceProvider sp, Guid id) =>
+    await Pages.RegressionToggle(sp, id));
+app.MapGet("/regressions/{id}", async (IServiceProvider sp, Guid id) => await Pages.RegressionDetail(sp, id));
 app.MapGet("/baselines", async (IServiceProvider sp, string? created, string? error) =>
     await Pages.Baselines(sp, created, error));
 app.MapGet("/baselines/compare", async (IServiceProvider sp, Guid assessment) =>
@@ -502,6 +506,168 @@ internal static class Pages
         {
             return Results.Redirect("/baselines?error=" + Uri.EscapeDataString(ex.SafeMessage), permanent: false);
         }
+    }
+
+    /// <summary>
+    /// Stored regression tests: the durable promise that every fixture-backed authorization finding
+    /// keeps being re-verified on its cadence. Due tests lead the list; disabled ones stay visible
+    /// with their history instead of disappearing. Replays themselves run from the CLI against an
+    /// explicitly supplied base URL - a console button that silently picked its own target to
+    /// contact would be exactly the kind of unscoped network action this platform refuses.
+    /// </summary>
+    public static async Task<IResult> Regressions(IServiceProvider sp)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+        var tests = await db.ListRegressionTestsAsync(200);
+        var assessments = await db.ListAssessmentsAsync(200);
+        var names = assessments.ToDictionary(a => a.AssessmentId, static a => a.Name);
+        var now = DateTimeOffset.UtcNow;
+
+        var b = new StringBuilder();
+        b.Append("<h1>Regression Tests</h1>");
+        b.Append("<p>Each row re-verifies one known finding on its cadence: the stored replay runs ")
+            .Append("from the CLI (<code>artemis regression run --finding ID --base-url URL</code>) and every ")
+            .Append("verdict is recorded here with an audited event. A FAIL means the original issue returned.</p>");
+
+        if (tests.Count == 0)
+        {
+            b.Append("<p>No regression tests stored yet. They are captured automatically when an assessment ")
+                .Append("runs with operator-supplied <a href=\"/config\">authorization fixtures</a>.</p>");
+        }
+        else
+        {
+            var rows = new StringBuilder();
+            foreach (var test in tests)
+            {
+                var due = test.Enabled && test.NextRunUtc <= now;
+                string lastVerdict = "-";
+                if (test.LastRunUtc is { } lastRun)
+                {
+                    var runs = await db.ListTestRunsAsync(test.RegressionTestId, 1);
+                    lastVerdict = runs.Count > 0
+                        ? $"<span class=\"sev-{(runs[0].Result == VerificationState.Confirmed ? "High" : "Low")}\">{runs[0].Result}</span> "
+                            + Esc(runs[0].RanAtUtc.ToString("u"))
+                        : "recorded " + Esc(lastRun.ToString("u"));
+                }
+
+                rows.Append("<tr>");
+                rows.Append("<td><a href=\"/regressions/").Append(test.RegressionTestId).Append("\">")
+                    .Append(Esc(test.Name)).Append("</a></td>");
+                rows.Append($"<td><span class=\"sev-{test.SuggestedSeverity}\">{test.SuggestedSeverity}</span></td>");
+                rows.Append("<td>").Append(test.Enabled ? "enabled" : "<b>disabled</b>").Append(due ? " <b>DUE</b>" : "").Append("</td>");
+                rows.Append("<td>").Append(Esc(RegressionOperations.FormatCadence(test.Cadence))).Append("</td>");
+                rows.Append("<td>").Append(lastVerdict).Append("</td>");
+                rows.Append("<td>").Append(Esc(names.GetValueOrDefault(test.OriginAssessmentId, ShortId(test.OriginAssessmentId)))).Append("</td>");
+                rows.Append("<td><form class=\"inline\" method=\"post\" action=\"/regressions/")
+                    .Append(test.RegressionTestId).Append("/toggle\"><button type=\"submit\">")
+                    .Append(test.Enabled ? "Pause" : "Resume").Append("</button></form></td>");
+                rows.Append("</tr>");
+            }
+
+            b.Append("<table><tr><th>Test</th><th>Severity</th><th>State</th><th>Cadence</th>")
+                .Append("<th>Last verdict</th><th>Origin assessment</th><th></th></tr>")
+                .Append(rows).Append("</table>");
+        }
+
+        return Results.Content(
+            ArtemisConsoleLayout.Render("Regressions", "Regressions", b.ToString()), "text/html");
+    }
+
+    public static async Task<IResult> RegressionDetail(IServiceProvider sp, Guid id)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+        var test = await db.GetRegressionTestAsync(id);
+        if (test is null) return Results.NotFound("Regression test not found.");
+
+        var b = new StringBuilder();
+        b.Append("<h1>").Append(Esc(test.Name)).Append("</h1>");
+        b.Append($"<p><span class=\"sev-{test.SuggestedSeverity}\">{test.SuggestedSeverity}</span>, ")
+            .Append(test.Enabled ? "enabled" : "disabled").Append(", cadence ")
+            .Append(Esc(RegressionOperations.FormatCadence(test.Cadence)))
+            .Append(". Created ").Append(test.CreatedUtc.ToString("u"))
+            .Append(" - next scheduled verification ").Append(test.NextRunUtc.ToString("u")).Append(".</p>");
+        b.Append("<p>Origin finding <a href=\"/findings/").Append(test.FindingId).Append("\">")
+            .Append(ShortId(test.FindingId)).Append("</a> from assessment ")
+            .Append(ShortId(test.OriginAssessmentId)).Append(".</p>");
+
+        if (test.RecipeJson is { } recipeJson)
+        {
+            try
+            {
+                var recipe = RegressionRunner.Deserialize(recipeJson);
+                if (recipe is { } executable)
+                {
+                    b.Append("<h3>Replay steps</h3><ol>");
+                    foreach (var step in executable.Steps)
+                    {
+                        b.Append("<li><b>Given</b> ").Append(Esc(step.Given))
+                            .Append(" - <b>when</b> ").Append(Esc(step.When))
+                            .Append(", <b>then</b> ").Append(Esc(step.Then)).Append("</li>");
+                    }
+
+                    b.Append("</ol>");
+                    if (executable.HttpExpectation is { } expectation)
+                    {
+                        b.Append("<p>Executable check: <code>").Append(Esc(expectation.Method + " " + expectation.Url.PathAndQuery))
+                            .Append("</code> must answer within <b>").Append(expectation.ExpectedStatusMin)
+                            .Append("..").Append(expectation.ExpectedStatusMax).Append("</b>.</p>");
+                        b.Append("<p>Run it from the CLI against the authorized origin:</p><pre>artemis regression run --finding ")
+                            .Append(test.FindingId).Append(" --base-url URL</pre>");
+                    }
+                }
+            }
+            catch (ActException)
+            {
+                b.Append("<p style=\"color:#b71c1c\">Stored recipe unreadable; treat this test as manual-only.</p>");
+            }
+        }
+        else
+        {
+            b.Append("<p>This row predates stored recipes; it is tracked manually.</p>");
+        }
+
+        var runs = await db.ListTestRunsAsync(id, 20);
+        b.Append("<h3>Run history</h3>");
+        if (runs.Count == 0)
+        {
+            b.Append("<p>Never executed yet.</p>");
+        }
+        else
+        {
+            var rows = new StringBuilder();
+            foreach (var run in runs)
+            {
+                rows.Append("<tr><td>").Append(run.RanAtUtc.ToString("u")).Append("</td><td>")
+                    .Append(run.Result == VerificationState.Confirmed
+                        ? "<b style=\"color:#c62828\">REGRESSED</b>"
+                        : "<span class=\"sev-Low\">held</span>")
+                    .Append("</td><td>").Append(Esc(run.Detail)).Append("</td></tr>");
+            }
+
+            b.Append("<table><tr><th>Ran (UTC)</th><th>Verdict</th><th>Detail</th></tr>").Append(rows).Append("</table>");
+        }
+
+        return Results.Content(
+            ArtemisConsoleLayout.Render("Regression detail", "Regressions", b.ToString()), "text/html");
+    }
+
+    /// <summary>Console entry into pausing or resuming one regression cadence, audited either way.</summary>
+    public static async Task<IResult> RegressionToggle(IServiceProvider sp, Guid id)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+        var test = await db.GetRegressionTestAsync(id);
+        if (test is null) return Results.NotFound("Regression test not found.");
+
+        try
+        {
+            await RegressionOperations.SetEnabledAsync(db, id, !test.Enabled, "operator-console", CorrelationId.New());
+        }
+        catch (ActException ex)
+        {
+            return Results.BadRequest(ex.SafeMessage);
+        }
+
+        return Results.Redirect("/regressions", permanent: false);
     }
 
     private static string ShortId(Guid value) => value.ToString("N")[..8];

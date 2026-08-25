@@ -208,14 +208,15 @@ public sealed partial class ActDatabase
             await using var command = Command(connection, transaction, """
                 INSERT INTO regression_tests(regression_test_id, finding_id, assessment_id, name, description,
                                              suggested_severity, cadence_seconds, enabled, created_utc,
-                                             last_run_utc, next_run_utc)
+                                             last_run_utc, next_run_utc, recipe_json)
                 VALUES($id, $finding_id, $assessment_id, $name, $description, $severity, $cadence_seconds,
-                       $enabled, $created_utc, $last_run_utc, $next_run_utc)
+                       $enabled, $created_utc, $last_run_utc, $next_run_utc, $recipe_json)
                 ON CONFLICT(regression_test_id) DO UPDATE SET
                     finding_id = $finding_id, assessment_id = $assessment_id, name = $name,
                     description = $description, suggested_severity = $severity,
                     cadence_seconds = $cadence_seconds, enabled = $enabled,
-                    last_run_utc = $last_run_utc, next_run_utc = $next_run_utc
+                    last_run_utc = $last_run_utc, next_run_utc = $next_run_utc,
+                    recipe_json = $recipe_json
                 """);
             command.Parameters.AddWithValue("$id", test.RegressionTestId.ToString());
             command.Parameters.AddWithValue("$finding_id", test.FindingId.ToString());
@@ -228,6 +229,7 @@ public sealed partial class ActDatabase
             command.Parameters.AddWithValue("$created_utc", Db(test.CreatedUtc));
             command.Parameters.AddWithValue("$last_run_utc", DbOptional(test.LastRunUtc));
             command.Parameters.AddWithValue("$next_run_utc", Db(nextRun));
+            command.Parameters.AddWithValue("$recipe_json", DbOptional(test.RecipeJson));
             await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
         }, cancellationToken);
     }
@@ -344,7 +346,7 @@ public sealed partial class ActDatabase
             command.CommandText = """
                 SELECT r.regression_test_id, r.finding_id, r.assessment_id, r.name, r.description,
                        r.suggested_severity, r.cadence_seconds, r.enabled, r.created_utc, r.last_run_utc,
-                       r.next_run_utc
+                       r.next_run_utc, r.recipe_json
                 FROM regression_tests r
                 JOIN findings f ON f.finding_id = r.finding_id
                 WHERE f.assessment_id = $assessment_id
@@ -361,6 +363,104 @@ public sealed partial class ActDatabase
             return (IReadOnlyList<RegressionTestRecord>)tests;
         }, cancellationToken);
 
+    /// <summary>
+    /// Returns the stored regression test for one finding, or null when none exists. Used to
+    /// upsert by finding so repeated captures update one durable test instead of piling rows.
+    /// </summary>
+    public Task<RegressionTestRecord?> GetRegressionTestForFindingAsync(Guid findingId, CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            command.CommandText = "SELECT * FROM regression_tests WHERE finding_id = $finding ORDER BY created_utc ASC LIMIT 1";
+            command.Parameters.AddWithValue("$finding", findingId.ToString());
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            return await reader.ReadAsync(token).ConfigureAwait(false) ? MapRegressionTest(reader) : null;
+        }, cancellationToken);
+
+    /// <summary>
+    /// Lists stored regression tests newest-schedule-first across every assessment. The console
+    /// and 'regression list' read exclusively through this; the limit is a hard page bound.
+    /// </summary>
+    public Task<IReadOnlyList<RegressionTestRecord>> ListRegressionTestsAsync(int limit, CancellationToken cancellationToken = default)
+    {
+        if (limit < 1)
+        {
+            throw ActException.FailClosed(ErrorCategory.Persistence,
+                "The regression test listing requires a positive page size.",
+                $"ListRegressionTests called with limit {limit}.");
+        }
+
+        return ReadAsync(async (command, token) =>
+        {
+            command.CommandText =
+                "SELECT * FROM regression_tests ORDER BY enabled DESC, next_run_utc ASC LIMIT $limit";
+            command.Parameters.AddWithValue("$limit", limit);
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var tests = new List<RegressionTestRecord>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                tests.Add(MapRegressionTest(reader));
+            }
+
+            return (IReadOnlyList<RegressionTestRecord>)tests;
+        }, cancellationToken);
+    }
+
+    /// <summary>Returns the most recent verification runs of one regression test, newest first.</summary>
+    public Task<IReadOnlyList<RegressionTestRunRecord>> ListTestRunsAsync(
+        Guid regressionTestId, int limit, CancellationToken cancellationToken = default)
+    {
+        if (limit < 1)
+        {
+            throw ActException.FailClosed(ErrorCategory.Persistence,
+                "The regression run listing requires a positive page size.",
+                $"ListTestRuns called with limit {limit}.");
+        }
+
+        return ReadAsync(async (command, token) =>
+        {
+            command.CommandText =
+                "SELECT * FROM test_runs WHERE regression_test_id = $id ORDER BY ran_utc DESC, test_run_id DESC LIMIT $limit";
+            command.Parameters.AddWithValue("$id", regressionTestId.ToString());
+            command.Parameters.AddWithValue("$limit", limit);
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var runs = new List<RegressionTestRunRecord>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                runs.Add(MapTestRun(reader));
+            }
+
+            return (IReadOnlyList<RegressionTestRunRecord>)runs;
+        }, cancellationToken);
+    }
+
+    private static RegressionTestRunRecord MapTestRun(SqliteDataReader row) => new(
+        TestRunId: row.IntOf("test_run_id"),
+        RegressionTestId: row.GuidOf("regression_test_id"),
+        RanAtUtc: row.TimeOf("ran_utc"),
+        Result: ActValues.Enum<VerificationState>(row.Str("result"), "result"),
+        Detail: row.Str("detail"));
+
+    /// <summary>
+    /// Enables or disables one regression test in place. Disabling keeps the row and its run
+    /// history - an operator pausing a cadence must not lose the evidence of past verdicts.
+    /// Fails closed when the test does not exist.
+    /// </summary>
+    public Task SetRegressionTestEnabledAsync(Guid regressionTestId, bool enabled, CancellationToken cancellationToken = default) =>
+        WriteAsync(async (connection, transaction, token) =>
+        {
+            await using var command = Command(connection, transaction,
+                "UPDATE regression_tests SET enabled = $enabled WHERE regression_test_id = $id");
+            command.Parameters.AddWithValue("$enabled", Db(enabled));
+            command.Parameters.AddWithValue("$id", regressionTestId.ToString());
+            var touched = await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            if (touched == 0)
+            {
+                throw ActException.FailClosed(ErrorCategory.Persistence,
+                    "The regression test to enable or disable does not exist.",
+                    $"SetRegressionTestEnabled found no regression test {regressionTestId}.");
+            }
+        }, cancellationToken);
+
     private static RegressionTestRecord MapRegressionTest(SqliteDataReader row) => new(
         RegressionTestId: row.GuidOf("regression_test_id"),
         OriginAssessmentId: row.GuidOf("assessment_id"),
@@ -372,7 +472,8 @@ public sealed partial class ActDatabase
         Enabled: row.BoolOf("enabled"),
         CreatedUtc: row.TimeOf("created_utc"),
         LastRunUtc: row.TimeOrNull("last_run_utc"),
-        NextRunUtc: row.TimeOf("next_run_utc"));
+        NextRunUtc: row.TimeOf("next_run_utc"),
+        RecipeJson: row.StrOrNull("recipe_json"));
 
     // ---------- advisory feeds ----------
 

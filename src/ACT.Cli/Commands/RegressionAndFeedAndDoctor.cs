@@ -1,6 +1,7 @@
 
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using ACT.Contracts;
 using ACT.Core;
@@ -16,29 +17,203 @@ using Microsoft.Extensions.Logging;
 
 namespace ACT.Cli;
 
-/// <summary>artemis regression run --finding ID --base-url URL [--fixtures FILE]</summary>
+/// <summary>artemis regression list|show|run - stored re-verification tests for known findings.</summary>
 public static class RegressionCommands
 {
     public static async Task<int> Run(IServiceProvider services, string[] args)
     {
-        if (args.Length == 0 || args[0] != "run")
+        if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: artemis regression run --finding FINDING_ID --base-url URL [--fixtures FILE]");
+            Usage();
             return ExitCodes.UsageError;
         }
 
+        return args[0] switch
+        {
+            "list" => await ListAsync(services, args[1..]),
+            "show" => await ShowAsync(services, args[1..]),
+            "run" => await RunOneAsync(services, args[1..]),
+            _ => await RunOneAsync(services, args) // legacy one-shot form keeps working
+        };
+    }
+
+    private static void Usage()
+    {
+        Console.Error.WriteLine("usage: artemis regression list [--assessment ASSESSMENT_ID]");
+        Console.Error.WriteLine("       artemis regression show REGRESSION_TEST_ID");
+        Console.Error.WriteLine("       artemis regression run --finding FINDING_ID --base-url URL [--fixtures FILE] [--cadence-days N]");
+    }
+
+    /// <summary>
+    /// Lists stored regression tests with their cadence state. A test is DUE when its scheduled
+    /// verification time has elapsed; disabled tests are listed but never due.
+    /// </summary>
+    private static async Task<int> ListAsync(IServiceProvider services, string[] args)
+    {
+        Guid? assessmentFilter = null;
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i] == "--assessment" && Guid.TryParse(args[i + 1], out var parsed)) assessmentFilter = parsed;
+        }
+
+        var db = services.GetRequiredService<ActDatabase>();
+        await db.InitializeAsync();
+        var tests = await db.ListRegressionTestsAsync(500);
+        if (assessmentFilter is { } filter)
+        {
+            tests = [.. tests.Where(t => t.OriginAssessmentId == filter)];
+        }
+
+        var assessments = await db.ListAssessmentsAsync(500);
+        var names = assessments.ToDictionary(a => a.AssessmentId, a => a.Name);
+        var now = DateTimeOffset.UtcNow;
+
+        var human = tests.Count == 0
+            ? "no regression tests stored yet - they are captured from fixture-backed authorization findings"
+            : string.Join(Environment.NewLine, tests.Select(t =>
+            {
+                var due = t.Enabled && t.NextRunUtc <= now ? " DUE" : "";
+                var lastRun = t.LastRunUtc?.ToString("u") ?? "never";
+                return t.RegressionTestId.ToString()[..8] + "  " + (t.Enabled ? "enabled " : "DISABLED") + "  "
+                    + t.SuggestedSeverity.ToString().PadRight(14)
+                    + RegressionOperations.FormatCadence(t.Cadence).PadRight(20)
+                    + "last " + lastRun + "  next " + t.NextRunUtc.ToString("u") + due + "  "
+                    + "[assessment " + names.GetValueOrDefault(t.OriginAssessmentId, t.OriginAssessmentId.ToString()[..8]) + "]  "
+                    + t.Name;
+            }));
+
+        return await OutputWriter.WriteAsync(services, human, JsonSerializer.Serialize(new
+        {
+            now,
+            tests = tests.Select(t => new
+            {
+                regressionTestId = t.RegressionTestId,
+                findingId = t.FindingId,
+                assessmentId = t.OriginAssessmentId,
+                name = t.Name,
+                severity = t.SuggestedSeverity.ToString(),
+                enabled = t.Enabled,
+                due = t.Enabled && t.NextRunUtc <= now,
+                lastRunUtc = t.LastRunUtc,
+                nextRunUtc = t.NextRunUtc,
+                executable = t.RecipeJson is not null,
+                cadence = RegressionOperations.FormatCadence(t.Cadence)
+            })
+        }, JsonOpts.Indented));
+    }
+
+    /// <summary>Shows one stored test in full, including its replay steps and run history.</summary>
+    private static async Task<int> ShowAsync(IServiceProvider services, string[] args)
+    {
+        if (args.Length == 0 || !Guid.TryParse(args[0], out var testId))
+        {
+            Console.Error.WriteLine("error: regression show requires REGRESSION_TEST_ID.");
+            return ExitCodes.UsageError;
+        }
+
+        var db = services.GetRequiredService<ActDatabase>();
+        await db.InitializeAsync();
+        var test = await db.GetRegressionTestAsync(testId)
+            ?? throw ActException.FailClosed(ErrorCategory.Persistence,
+                "The requested regression test does not exist.",
+                $"No stored regression test '{testId}'.");
+
+        var runs = await db.ListTestRunsAsync(testId, 10);
+        GeneratedRegression? recipe = null;
+        if (test.RecipeJson is not null)
+        {
+            try { recipe = RegressionRunner.Deserialize(test.RecipeJson); }
+            catch (ActException) { recipe = null; } // shown as non-executable below, never hidden
+        }
+
+        var human = new StringBuilder()
+            .AppendLine(test.Name)
+            .AppendLine(new string('-', Math.Min(72, Math.Max(8, test.Name.Length))))
+            .AppendLine("id:        " + test.RegressionTestId)
+            .AppendLine("finding:   " + test.FindingId)
+            .AppendLine("severity:  " + test.SuggestedSeverity)
+            .AppendLine("cadence:   " + RegressionOperations.FormatCadence(test.Cadence))
+            .AppendLine("state:     " + (test.Enabled ? "enabled" : "disabled")
+                + (test.RecipeJson is null ? ", captured before recipes were stored (manual only)" : ""))
+            .AppendLine("created:   " + test.CreatedUtc.ToString("u"))
+            .AppendLine("last run:  " + (test.LastRunUtc?.ToString("u") ?? "never"))
+            .AppendLine("next run:  " + test.NextRunUtc.ToString("u")
+                + (test.Enabled && test.NextRunUtc <= DateTimeOffset.UtcNow ? "  (DUE)" : ""))
+            .AppendLine();
+
+        if (recipe is { } executable)
+        {
+            human.AppendLine("replay steps:");
+            foreach (var step in executable.Steps)
+            {
+                human.AppendLine("  given : " + step.Given);
+                human.AppendLine("  when  : " + step.When);
+                human.AppendLine("  then  : " + step.Then);
+                human.AppendLine();
+            }
+        }
+        else
+        {
+            human.AppendLine("replay steps: none recorded for this row.");
+        }
+
+        human.AppendLine(runs.Count == 0 ? "run history: empty." : "recent runs:");
+        foreach (var run in runs)
+        {
+            human.AppendLine($"  {run.RanAtUtc:u}  {run.Result,-12}  {run.Detail}");
+        }
+
+        return await OutputWriter.WriteAsync(services, human.ToString(), JsonSerializer.Serialize(new
+        {
+            test.RegressionTestId,
+            test.FindingId,
+            test.OriginAssessmentId,
+            test.Name,
+            test.Description,
+            severity = test.SuggestedSeverity.ToString(),
+            test.Enabled,
+            executable = recipe is not null,
+            steps = recipe?.Steps.Select(s => new { s.Given, s.When, s.Then }),
+            expectation = recipe?.HttpExpectation is { } e
+                ? new { method = e.Method.ToString(), urlPath = e.Url.PathAndQuery, e.ExpectedStatusMin, e.ExpectedStatusMax }
+                : null,
+            runs = runs.Select(r => new { r.RanAtUtc, result = r.Result.ToString(), detail = r.Detail })
+        }, JsonOpts.Indented));
+    }
+
+    /// <summary>
+    /// Generates the regression for one finding, stores it durably (upsert per finding), executes
+    /// it through the safe engine against an explicitly provided base URL, and records the verdict
+    /// on the cadence schedule with an audited event.
+    /// </summary>
+    private static async Task<int> RunOneAsync(IServiceProvider services, string[] args)
+    {
         string? findingIdText = null;
         string? baseUrlText = null;
         string? fixturesFile = null;
-        for (var i = 1; i < args.Length - 1; i++)
+        string? actorFlag = null;
+        double? cadenceDays = null;
+        for (var i = 0; i < args.Length - 1; i++)
         {
             if (args[i] == "--finding") findingIdText = args[i + 1];
             if (args[i] == "--base-url") baseUrlText = args[i + 1];
             if (args[i] == "--fixtures") fixturesFile = args[i + 1];
+            if (args[i] == "--actor") actorFlag = args[i + 1];
+            if (args[i] == "--cadence-days" && double.TryParse(args[i + 1], System.Globalization.CultureInfo.InvariantCulture, out var days)) cadenceDays = days;
         }
-        if (!Guid.TryParse(findingIdText, out var findingId) || baseUrlText is null)
+
+        if (!Guid.TryParse(findingIdText, out var findingId))
         {
+            Usage();
             Console.Error.WriteLine("error: --finding FINDING_ID and --base-url URL are required.");
+            return ExitCodes.UsageError;
+        }
+
+        if (baseUrlText is null || !Uri.TryCreate(baseUrlText, UriKind.Absolute, out var baseUrl)
+            || (baseUrl.Scheme != "http" && baseUrl.Scheme != "https"))
+        {
+            Usage();
+            Console.Error.WriteLine("error: --base-url must be an absolute http(s) URL.");
             return ExitCodes.UsageError;
         }
 
@@ -53,6 +228,8 @@ public static class RegressionCommands
         var fixtures = fixturesFile is null ? AuthorizationFixtureSet.None : FixturesFile.Load(fixturesFile);
         fixtures.Validate();
 
+        // The replay runs inside a minimal single-target scope derived from the operator-provided
+        // base URL, so every request inherits full scope enforcement instead of raw HttpClient.
         var scope = ValidRegressionScope(baseUrlText);
         var compiled = new CompiledScope(scope);
         var validator = new ScopeValidator(compiled, new PinningDnsResolver());
@@ -61,24 +238,33 @@ public static class RegressionCommands
 
         await using var http = new SafeHttpEngine(validator, validator, budget, limiter, Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance);
 
-        var generated = RegressionGenerator.TryGenerate(finding, fixtures, new Uri(baseUrlText));
-        if (generated is null)
+        var generated = RegressionGenerator.TryGenerate(finding, fixtures, baseUrl);
+        if (generated is null || generated.HttpExpectation is null)
         {
-            Console.Error.WriteLine("error: this finding class has no executable regression template and no fixtures were supplied.");
+            Console.Error.WriteLine("error: no executable HTTP regression exists for this finding without "
+                + "authorization fixtures describing at least two principals and one object.");
             return ExitCodes.UsageError;
         }
 
+        var actor = actorFlag ?? "operator-cli";
+        var correlation = CorrelationId.New();
+        var test = await RegressionOperations.StoreForFindingAsync(
+            db, finding.AssessmentId, finding, generated, actor, correlation,
+            cadenceDays is { } chosenDays ? TimeSpan.FromDays(chosenDays) : null);
+
         var runner = new RegressionRunner(http);
         var result = await runner.RunAsync(generated, CancellationToken.None);
+        var recorded = await RegressionOperations.RecordRunOutcomeAsync(db, test, result, actor, correlation);
 
         return await OutputWriter.WriteAsync(services,
-            $"{(result.Passed ? "PASS" : "FAIL")} - {result.DetailSafe}",
+            $"{(result.Passed ? "PASS" : "FAIL")} - {result.DetailSafe} (test {test.RegressionTestId.ToString()[..8]}, next run {test.NextRunUtc:u})",
             JsonSerializer.Serialize(new
             {
-                regressionTestId = result.RegressionTestId,
+                regressionTestId = test.RegressionTestId,
                 findingId = result.FindingId,
                 passed = result.Passed,
                 detail = result.DetailSafe,
+                recordedResult = recorded.Result.ToString(),
                 ranUtc = result.RanUtc
             }, JsonOpts.Indented));
     }

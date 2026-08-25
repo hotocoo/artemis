@@ -2,7 +2,12 @@ using ACT.Contracts;
 
 namespace ACT.Persistence;
 
-/// <summary>A stored re-verification recipe that proves whether one known finding has returned after remediation.</summary>
+/// <summary>
+/// A stored re-verification recipe that proves whether one known finding has returned after
+/// remediation. <see cref="RecipeJson"/> carries the serialized machine-executable replay
+/// (ACT.Core GeneratedRegression); null on rows captured before recipes were persisted, which are
+/// listed honestly as "manual" rather than silently replayed.
+/// </summary>
 public sealed record RegressionTestRecord(
     Guid RegressionTestId,
     Guid OriginAssessmentId,
@@ -14,7 +19,8 @@ public sealed record RegressionTestRecord(
     bool Enabled,
     DateTimeOffset CreatedUtc,
     DateTimeOffset? LastRunUtc,
-    DateTimeOffset NextRunUtc);
+    DateTimeOffset NextRunUtc,
+    string? RecipeJson = null);
 
 /// <summary>One executed regression verification and its verdict.</summary>
 public sealed record RegressionTestRunRecord(

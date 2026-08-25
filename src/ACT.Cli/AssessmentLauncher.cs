@@ -147,16 +147,59 @@ public static class AssessmentLauncher
         var engine = services.GetRequiredService<AssessmentEngine>();
         try
         {
-            return await engine.RunAsync(new AssessmentRunRequest(
+            var summary = await engine.RunAsync(new AssessmentRunRequest(
                 scope.AssessmentId, correlation, scope, budget,
                 checks, contexts, PreexistingFindings: null,
                 Scorer: services.GetService<IFindingScorer>() ?? new DeterministicFindingScorer()),
                 linkedCts.Token);
+
+            // Completed runs with operator-supplied fixtures leave durable regression tests behind
+            // (upserted per finding, audited). A capture failure must never erase a finished
+            // assessment's results, so it is contained and audited instead of propagated.
+            await CaptureRegressionsAfterRunAsync(db, summary, fixtures, baseUrl);
+
+            return summary;
         }
         finally
         {
             linkedCts.Cancel();
             try { await watcher; } catch (OperationCanceledException) { }
+        }
+    }
+
+    /// <summary>
+    /// Stores machine-executable regression tests for the run's fixture-backed findings. Without
+    /// fixtures there is nothing executable to store and this returns immediately - the engine
+    /// never invents identifiers or credentials to fabricate one.
+    /// </summary>
+    private static async Task CaptureRegressionsAfterRunAsync(
+        ActDatabase db,
+        AssessmentRunSummary summary,
+        AuthorizationFixtureSet fixtures,
+        Uri? baseUrl)
+    {
+        if (baseUrl is null || fixtures.Principals.Count < 2 || fixtures.Objects.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            await RegressionOperations.CaptureForFindingsAsync(
+                db, summary.AssessmentId, summary.Findings, fixtures, baseUrl,
+                "engine", CorrelationId.New());
+        }
+        catch (Exception ex)
+        {
+            var safe = ex is ActException act ? act.SafeMessage : "unexpected failure type " + ex.GetType().Name;
+            Console.Error.WriteLine("warning: regression capture failed: " + safe);
+            await db.AppendAuditAsync(new AuditDraft(
+                Actor: "engine",
+                Action: "regression.capture_failed",
+                ObjectType: "assessment",
+                ObjectId: summary.AssessmentId.ToString(),
+                Result: safe,
+                Correlation: CorrelationId.New()));
         }
     }
 

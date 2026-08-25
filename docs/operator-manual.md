@@ -25,7 +25,7 @@ For private-target scopes, DNS names must resolve INSIDE the configured networks
 
 ## 2. Authorization testing (optional)
 
-Provide fixtures (`samples/authorization-fixtures.example.json`) with test principals, objects, and expectations. Artemis verifies ONLY these explicit cases - it never guesses identifiers or credentials. Every confirmed access-control finding yields a machine-executable regression test.
+Provide fixtures (`samples/authorization-fixtures.example.json`) with test principals, objects, and expectations. Artemis verifies ONLY these explicit cases - it never guesses identifiers or credentials. Every violated expectation becomes an audited access-control finding, and that finding is captured as a **stored, machine-executable regression test** (default cadence: 7 days) at the end of the run - no separate step required.
 
 ## 3. Running assessments
 
@@ -104,6 +104,34 @@ hash-chained audit log (`baseline.created`, `baseline.compared`).
 `compare` is pipeline-friendly: exit code 0 when there is no drift, exit code 5 (gate failed)
 when any observation exists - so scheduled assessments can fail loudly on change instead of
 quietly collecting rows nobody reads.
+
+### Regression verification
+
+Every fixture-backed access-control finding keeps a durable promise: it will be re-verified.
+Captured tests live in the database with their serialized replay recipe, a verification cadence,
+and their complete run history:
+
+```
+artemis regression list [--assessment ASSESSMENT_ID]   # due state, cadence, last verdict per test
+artemis regression show REGRESSION_TEST_ID             # replay steps, invariant, recent runs
+artemis regression run --finding FINDING_ID --base-url URL [--fixtures FILE] [--cadence-days N]
+```
+
+- `run` stores (or refreshes) the test for that finding, executes the stored HTTP invariant through
+  the safe engine against your explicitly supplied base URL, records the verdict, advances the
+  cadence, and appends `regression.run_recorded` to the hash-chained audit log either way.
+- A PASS is recorded honestly as "held"; a FAIL means **the original issue returned** - the run is
+  recorded as a confirmation. It never silently flips the finding's triage status: status changes
+  stay explicit operator decisions, but the evidence is on the ledger next to everything else.
+- Only executable HTTP-expectation regressions are ever stored. Without fixtures describing real
+  principals and objects, `regression run` refuses rather than persisting something it could not
+  actually replay later.
+- Disabling a test pauses its cadence without erasing the row or its history (`Pause` / `Resume` on
+  the console page, audited as `regression.test_disabled` / `regression.test_enabled`).
+
+The console **Regressions** page lists every stored test with its due state and last verdict;
+due tests lead the list. Replays themselves always name their target explicitly via the CLI - a
+countdown timer must never pick its own network destination.
 
 ## 5. Evidence, redaction, retention
 
