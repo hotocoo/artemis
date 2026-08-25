@@ -95,7 +95,7 @@ app.MapGet("/baselines/compare", async (IServiceProvider sp, Guid assessment) =>
     await Pages.BaselineCompare(sp, assessment));
 app.MapPost("/baselines/create", async (IServiceProvider sp, HttpRequest request) =>
     await Pages.BaselineCreate(sp, request));
-app.MapGet("/audit", async (IServiceProvider sp) => await Pages.Audit(sp));
+app.MapGet("/audit", async (IServiceProvider sp, string? action, int? limit) => await Pages.Audit(sp, action, limit));
 app.MapGet("/schedules", async (IServiceProvider sp) => await Pages.Schedules(sp));
 app.MapGet("/config", (IServiceProvider sp) => Pages.Config(sp));
 app.MapGet("/health", async (IServiceProvider sp) => await Pages.Health(sp));
@@ -672,11 +672,15 @@ internal static class Pages
 
     private static string ShortId(Guid value) => value.ToString("N")[..8];
 
-    public static async Task<IResult> Audit(IServiceProvider sp)
+    public static async Task<IResult> Audit(IServiceProvider sp, string? action, int? limit)
     {
         var db = sp.GetRequiredService<ActDatabase>();
-        var events = await db.ReadRecentAuditAsync(200);
-        var chainOk = await db.VerifyChainAsync();
+        var pageSize = limit is > 0 and <= 1000 ? limit.Value : 200;
+        var actionPrefix = action?.Trim() is { Length: > 0 } prefix ? prefix : null;
+
+        var events = await db.ListAuditEventsAsync(pageSize, actionPrefix);
+        var total = await db.CountAuditEventsAsync();
+        var verification = await db.VerifyChainDetailedAsync();
 
         var rows = new StringBuilder();
         foreach (var e in events)
@@ -685,12 +689,38 @@ internal static class Pages
             rows.Append($"<td>{Esc(e.Action)}</td><td>{Esc(e.ObjectType)}:{Esc(e.ObjectId)}</td>");
             rows.Append($"<td>{Esc(e.Result)}</td><td style=\"font-size:.75rem\">{e.EventHash[..16]}...</td></tr>");
         }
-        var banner = chainOk
-            ? "<p>Hash chain verified over all stored events.</p>"
-            : "<p style=\"color:#b71c1c\"><strong>HASH CHAIN VERIFICATION FAILED</strong> - the audit log may have been tampered with.</p>";
+
+        string banner;
+        if (verification.Verified)
+        {
+            banner = $"<p>Hash chain verified over all {verification.EventCount} stored events.</p>";
+        }
+        else
+        {
+            // Name where the history stops being trustworthy instead of only saying that it does.
+            banner = "<p style=\"color:#b71c1c\"><strong>HASH CHAIN VERIFICATION FAILED</strong> - the audit log may have been tampered with.<br>"
+                + $"First broken entry: sequence {verification.FirstBrokenSequence} ({Esc(verification.Reason ?? "unverified")}).</p>";
+        }
+
+        // Quick filters over the event families every operator eventually hunts for.
+        var chips = new StringBuilder();
+        chips.Append("<p style=\"font-size:.85rem\">Filter: ");
+        foreach (var candidate in new[] { null, "assessment.", "finding.", "baseline.", "regression.", "schedule.", "evidence." })
+        {
+            var label = candidate ?? "all";
+            var selected = candidate == actionPrefix;
+            chips.Append(selected
+                ? "<b>" + Esc(label) + "</b> "
+                : "<a href=\"/audit" + (candidate is null ? "" : "?action=" + Uri.EscapeDataString(candidate)) + "\">" + Esc(label) + "</a> ");
+        }
+
+        chips.Append("</p>");
+        var head = "<h1>Audit Log</h1>" + chips
+            + $"<p style=\"color:#555;font-size:.85rem\">showing {events.Count} of {total} stored event(s)"
+            + (actionPrefix is null ? "" : ", action prefix &#39;" + Esc(actionPrefix) + "&#39;") + ", newest first.</p>";
         var table = "<table><tr><th>#</th><th>Time (UTC)</th><th>Actor</th><th>Action</th><th>Object</th><th>Result</th><th>Hash</th></tr>" + rows + "</table>";
         return Results.Content(
-            ArtemisConsoleLayout.Render("Audit Log", "Audit Log", "<h1>Audit Log</h1>" + banner + table), "text/html");
+            ArtemisConsoleLayout.Render("Audit Log", "Audit Log", head + banner + table), "text/html");
     }
 
     public static async Task<IResult> Schedules(IServiceProvider sp)

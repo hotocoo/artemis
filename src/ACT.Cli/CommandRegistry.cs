@@ -27,6 +27,7 @@ public static class CommandRegistry
         Register("assessment", AssessmentCommands.Run);
         Register("check", CheckCommand.Run);
         Register("finding", FindingCommands.Run);
+        Register("audit", AuditCommands.Run);
         Register("asset", AssetCommands.Run);
         Register("baseline", BaselineCommands.Run);
         Register("report", ReportCommands.Run);
@@ -68,6 +69,7 @@ public static class HelpPrinter
         "check" => "list built-in security checks",
         "finding" => "list, show, and triage stored findings",
         "asset" => "list discovered assets with their observed services",
+        "audit" => "verify, list and export the hash-chained audit ledger",
         "baseline" => "create security baselines and compare assessments against them",
         "report" => "generate JSON/CSV/Markdown/HTML/SARIF reports",
         "regression" => "list, show and replay stored machine-executable regression tests",
