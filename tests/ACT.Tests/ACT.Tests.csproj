@@ -22,6 +22,8 @@
     <ProjectReference Include="../../src/ACT.DependencyAnalysis/ACT.DependencyAnalysis.csproj" />
     <ProjectReference Include="../../src/ACT.Persistence/ACT.Persistence.csproj" />
     <ProjectReference Include="../../src/ACT.Reporting/ACT.Reporting.csproj" />
+    <!-- BaselineOperations lives at the composition layer and is unit-tested like the libraries below it. -->
+    <ProjectReference Include="../../src/ACT.Cli/ACT.Cli.csproj" />
     <ProjectReference Include="../../src/ACT.Policy/ACT.Policy.csproj" />
     <ProjectReference Include="../../src/ACT.Risk/ACT.Risk.csproj" />
     <ProjectReference Include="../../src/ACT.Evidence/ACT.Evidence.csproj" />

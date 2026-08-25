@@ -26,6 +26,18 @@ public sealed record DriftObservation(
     Severity SuggestedSeverity,
     string FingerprintSuffix);
 
+/// <summary>
+/// The complete result of comparing one assessment against a stored baseline: every service-level
+/// and finding-level drift observation, sorted deterministically. An empty list means the fresh
+/// assessment matches the baseline exactly - it never means the environment is secure.
+/// </summary>
+public sealed record BaselineComparison(
+    Guid BaselineId,
+    Guid ScopeId,
+    Guid AssessmentId,
+    DateTimeOffset ComparedUtc,
+    IReadOnlyList<DriftObservation> Observations);
+
 public enum ScheduleTriggerKind
 {
     Manual,

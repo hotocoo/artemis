@@ -1,6 +1,6 @@
 # Artemis
 
-**Artemis** is an autonomous, local-first **defensive** security assessment platform for systems you are explicitly authorized to test. It discovers authorized assets, validates scope deterministically, runs non-destructive security checks, collects tamper-evident evidence, deduplicates findings, scores risk honestly, supports audited operator triage of findings, generates regression tests from operator-supplied fixtures, and produces machine- and human-readable reports (JSON / CSV / Markdown / HTML / SARIF).
+**Artemis** is an autonomous, local-first **defensive** security assessment platform for systems you are explicitly authorized to test. It discovers authorized assets, validates scope deterministically, runs non-destructive security checks, collects tamper-evident evidence, deduplicates findings, scores risk honestly, supports audited operator triage of findings, stores audited security baselines that turn later runs into honest drift reports, generates regression tests from operator-supplied fixtures, and produces machine- and human-readable reports (JSON / CSV / Markdown / HTML / SARIF).
 
 > Internal module prefix `ACT.*` (Artemis Core Toolkit) names the assemblies and namespaces; the product name is **Artemis**.
 
