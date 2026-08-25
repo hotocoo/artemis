@@ -14,6 +14,7 @@ internal static class ArtemisConsoleLayout
         {
             ("/", "Dashboard"),
             ("/assessments", "Assessments"),
+            ("/inventory", "Inventory"),
             ("/findings", "Findings"),
             ("/schedules", "Schedules"),
             ("/audit", "Audit Log"),

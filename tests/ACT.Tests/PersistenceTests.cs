@@ -248,6 +248,78 @@ public sealed class PersistenceTests
         }
     }
 
+    [Fact]
+    public async Task Persist_AssetInventoryListingFiltersOrdersAndNeverHidesScopeViolations()
+    {
+        var fixture = await CreateDatabaseAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+
+            // An empty database reads as empty, not as an error.
+            Assert.Empty(await db.ListAssetsAsync(null, 50));
+            Assert.Empty(await db.ListServicesAsync(null, 50));
+            // Fail closed: a non-positive paging limit is refused before any row is read.
+            await Assert.ThrowsAsync<ActException>(async () => _ = await db.ListAssetsAsync(null, 0));
+            await Assert.ThrowsAsync<ActException>(async () => _ = await db.ListServicesAsync(null, -1));
+
+            var first = await CreatePairedAsync(db);
+            var second = await CreatePairedAsync(db, "second-assessment");
+
+            var oldest = DateTimeOffset.UtcNow.AddHours(-3);
+            var middle = DateTimeOffset.UtcNow.AddHours(-2);
+            var newest = DateTimeOffset.UtcNow.AddHours(-1);
+
+            var hostFirst = new AssetRecord(Guid.NewGuid(), first.AssessmentId, AssetKind.Host,
+                "host-first", "localhost", ["127.0.0.1"], oldest, WithinScope: true);
+            var urlFirst = new AssetRecord(Guid.NewGuid(), first.AssessmentId, AssetKind.Url,
+                "url-first", "https://localhost:8443/", ["::1", "127.0.0.1"], newest, WithinScope: true);
+            // The out-of-scope discovery is the row this feature exists for: it must survive listing.
+            var straySecond = new AssetRecord(Guid.NewGuid(), second.AssessmentId, AssetKind.Container,
+                "stray-container", "10.9.9.9", ["10.9.9.9"], middle, WithinScope: false);
+            foreach (var asset in new[] { hostFirst, urlFirst, straySecond })
+            {
+                Assert.True(await db.AddAssetAsync(asset));
+            }
+
+            var tls = new ServiceObservation(Guid.NewGuid(), urlFirst.AssetId, 8443, ProtocolKind.Https,
+                "unit banner", TlsNegotiated: true, newest.AddMinutes(-4), CheckId.From("CHK-TST"));
+            var plain = new ServiceObservation(Guid.NewGuid(), hostFirst.AssetId, 8080, ProtocolKind.Http,
+                Banner: null, TlsNegotiated: false, oldest.AddMinutes(30), CheckId.From("CHK-OTHER"));
+            var stray = new ServiceObservation(Guid.NewGuid(), straySecond.AssetId, 6379, ProtocolKind.Tcp,
+                "unit redis", TlsNegotiated: false, middle.AddMinutes(1), CheckId.From("CHK-DISC"));
+            foreach (var service in new[] { tls, plain, stray })
+            {
+                Assert.True(await db.AddServiceAsync(service));
+            }
+
+            // Newest discovery first across assessments; the scope violation stays visible.
+            var everything = await db.ListAssetsAsync(null, 50);
+            Assert.Equal([urlFirst.AssetId, straySecond.AssetId, hostFirst.AssetId],
+                everything.Select(a => a.AssetId).ToList());
+            Assert.Contains(everything, a => !a.WithinScope && a.CanonicalTarget == "10.9.9.9");
+
+            // Assessment narrowing covers whole assets only from that run.
+            var firstOnly = await db.ListAssetsAsync(first.AssessmentId, 50);
+            Assert.Equal([urlFirst.AssetId, hostFirst.AssetId], firstOnly.Select(a => a.AssetId).ToList());
+
+            // Limits truncate deterministically instead of erroring.
+            Assert.Single(await db.ListAssetsAsync(null, 1));
+
+            // Services join through their owning asset so one filtered query feeds both surfaces.
+            var everyService = await db.ListServicesAsync(null, 50);
+            Assert.Equal([tls.ServiceId, stray.ServiceId, plain.ServiceId],
+                everyService.Select(s => s.ServiceId).ToList());
+            var firstServices = await db.ListServicesAsync(first.AssessmentId, 50);
+            Assert.Equal([tls.ServiceId, plain.ServiceId], firstServices.Select(s => s.ServiceId).ToList());
+
+            // Round trip fidelity: every column survives storage including nulls and multi-IP sets.
+            Assert.Equivalent(urlFirst, everything.Single(a => a.AssetId == urlFirst.AssetId));
+            Assert.Equivalent(stray, everyService.Single(s => s.ServiceId == stray.ServiceId));
+            Assert.Null(everyService.Single(s => s.ServiceId == plain.ServiceId).Banner);
+        }
+    }
+
     // ---------- findings ----------
 
     [Fact]

@@ -35,9 +35,21 @@ During a run: every request passes rate limiting, scope verdicts, pinned DNS con
 
 ## 4. Reading results
 
-- CLI: `artemis finding list|show`, `artemis report generate`
+- CLI: `artemis finding list|show`, `artemis asset list`, `artemis report generate`
 - Console: `artemis-console` serves the operator UI on 127.0.0.1 only.
 - Reports: JSON, CSV, Markdown, HTML, SARIF 2.1. Coverage states distinguish tested / not tested / inaccessible / inconclusive / confirmed / inferred - reports never claim an environment is secure because checks passed.
+
+### Reviewing discovered assets
+
+Every asset discovery and service observation lands in the inventory; both surfaces read the same persisted rows:
+
+```
+artemis asset list                          # everything discovered so far
+artemis asset list --assessment ASSESSMENT_ID
+artemis --json asset list                   # full records incl. per-service banners and TLS flags
+```
+
+The console **Inventory** page shows the same rows with an assessment filter. Out-of-scope discoveries are never hidden: they stay listed with an explicit **OUT OF SCOPE** marker (the CLI tags them `OUT-OF-SCOPE`) because "the scanner reached something it should not have" is a scope-definition defect you must see, not a row to lose. The inventory is read-only by design - corrections belong to the scope configuration and the next assessment, not to history.
 
 ### Triaging findings
 

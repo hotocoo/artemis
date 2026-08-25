@@ -111,11 +111,17 @@ public class ScheduleTickerTests
     [Fact]
     public void InputOrder_IsPreservedAcrossDecisions()
     {
+        // One captured instant anchors both the fixture and the evaluation. A relative offset
+        // (e.g. 'one minute ago') is not boundary-safe: NextOccurrence compares whole minute
+        // slots, so for a step-minute expression like */10 a run one minute ago IS due whenever
+        // the current wall-clock minute sits on a step boundary - the assertion would flip six
+        // times an hour. With lastRun == now, the next occurrence is strictly in the future.
+        var now = DateTimeOffset.Now;
         var first = MakeSchedule("0 0 * * *", null);
         var second = MakeSchedule("not-a-cron", null);
-        var third = MakeSchedule("*/10 * * * *", DateTimeOffset.Now.AddMinutes(-1));
+        var third = MakeSchedule("*/10 * * * *", now);
 
-        var decisions = ScheduleTicker.Evaluate([first, second, third], DateTimeOffset.Now);
+        var decisions = ScheduleTicker.Evaluate([first, second, third], now);
 
         Assert.Equal(3, decisions.Count);
         Assert.Equal(first.ScheduleId, decisions[0].Schedule.ScheduleId);

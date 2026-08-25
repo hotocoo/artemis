@@ -77,15 +77,16 @@ if (actOptions.Ui.OpenBrowserOnStart)
     }
 }
 
-app.MapGet("/", async (IServiceProvider sp) => Pages.Dashboard(sp));
-app.MapGet("/assessments", async (IServiceProvider sp) => Pages.Assessments(sp));
-app.MapGet("/findings", async (IServiceProvider sp, string? assessment, string? status) => Pages.Findings(sp, assessment, status));
+app.MapGet("/", async (IServiceProvider sp) => await Pages.Dashboard(sp));
+app.MapGet("/assessments", async (IServiceProvider sp) => await Pages.Assessments(sp));
+app.MapGet("/inventory", async (IServiceProvider sp, string? assessment) => await Pages.Inventory(sp, assessment));
+app.MapGet("/findings", async (IServiceProvider sp, string? assessment, string? status) => await Pages.Findings(sp, assessment, status));
 app.MapGet("/findings/{id}", async (IServiceProvider sp, Guid id, string? triaged) =>
     await Pages.FindingDetail(sp, id, triaged));
 app.MapPost("/findings/{id}/triage", async (IServiceProvider sp, Guid id, HttpRequest request) =>
     await Pages.Triage(sp, id, request));
-app.MapGet("/audit", async (IServiceProvider sp) => Pages.Audit(sp));
-app.MapGet("/schedules", async (IServiceProvider sp) => Pages.Schedules(sp));
+app.MapGet("/audit", async (IServiceProvider sp) => await Pages.Audit(sp));
+app.MapGet("/schedules", async (IServiceProvider sp) => await Pages.Schedules(sp));
 app.MapGet("/config", (IServiceProvider sp) => Pages.Config(sp));
 app.MapGet("/health", async (IServiceProvider sp) => await Pages.Health(sp));
 app.MapPost("/emergency-stop", async (IServiceProvider sp) => await Pages.EmergencyStop(sp));
@@ -172,6 +173,61 @@ internal static class Pages
         var table = "<table><tr><th>Name</th><th>State</th><th>Operator</th><th>Organization</th><th>Created</th><th>Completed</th></tr>" + rows + "</table>";
         return Results.Content(
             ArtemisConsoleLayout.Render("Assessments", "Assessments", "<h1>Assessments</h1>" + table), "text/html");
+    }
+
+    /// <summary>
+    /// The discovered asset and service inventory, read-only by design. Out-of-scope discoveries
+    /// stay permanently visible and flagged: an asset that should never have been reached is
+    /// exactly the row an operator must not be able to lose.
+    /// </summary>
+    public static async Task<IResult> Inventory(IServiceProvider sp, string? assessment)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+        var assessmentId = Guid.TryParse(assessment, out var parsed) ? parsed : (Guid?)null;
+        var assets = await db.ListAssetsAsync(assessmentId, 500);
+        var services = await db.ListServicesAsync(assessmentId, 100_000);
+        var byAsset = services.GroupBy(s => s.AssetId).ToDictionary(g => g.Key, g => g.ToList());
+
+        var rows = new StringBuilder();
+        foreach (var asset in assets)
+        {
+            var observed = byAsset.TryGetValue(asset.AssetId, out var found) ? found : [];
+            var ports = observed.Count > 0
+                ? Esc(string.Join(", ", observed
+                    .OrderByDescending(s => s.TlsNegotiated).ThenBy(s => s.Port)
+                    .Select(s => s.Port + "/" + s.Protocol + (s.TlsNegotiated ? "+tls" : ""))))
+                : "-";
+            rows.Append("<tr>");
+            rows.Append("<td>").Append(Esc(asset.Kind)).Append("</td>");
+            rows.Append("<td>").Append(Esc(asset.DisplayName)).Append("</td>");
+            rows.Append("<td><code>").Append(Esc(asset.CanonicalTarget)).Append("</code></td>");
+            rows.Append(asset.WithinScope
+                ? "<td>in scope</td>"
+                : "<td style=\"color:#b71c1c\"><strong>OUT OF SCOPE</strong></td>");
+            rows.Append("<td>").Append(Esc(string.Join(", ", asset.ObservedIps))).Append("</td>");
+            rows.Append("<td>").Append(ports).Append("</td>");
+            rows.Append("<td>").Append(asset.DiscoveredAtUtc.ToLocalTime().ToString("u")).Append("</td></tr>");
+        }
+
+        // Filter form: one assessment or everything discovered so far.
+        var assessments = await db.ListAssessmentsAsync(50);
+        var options = new StringBuilder("<option value=\"\">All assessments</option>");
+        foreach (var a in assessments)
+        {
+            options.Append(a.AssessmentId == assessmentId
+                ? "<option value=\"" + a.AssessmentId + "\" selected>" + Esc(a.Name) + "</option>"
+                : "<option value=\"" + a.AssessmentId + "\">" + Esc(a.Name) + "</option>");
+        }
+
+        var head = "<h1>Asset Inventory</h1>"
+            + "<form class=\"inline\" method=\"get\" action=\"/inventory\"><select name=\"assessment\">"
+            + options
+            + "</select> <button type=\"submit\">Filter</button></form>";
+        var table = "<table><tr><th>Kind</th><th>Name</th><th>Canonical target</th><th>Scope</th>"
+            + "<th>Observed IPs</th><th>Services</th><th>Discovered</th></tr>"
+            + rows + "</table>";
+        return Results.Content(
+            ArtemisConsoleLayout.Render("Asset Inventory", "Inventory", head + table), "text/html");
     }
 
     public static async Task<IResult> Findings(IServiceProvider sp, string? assessment, string? status)
