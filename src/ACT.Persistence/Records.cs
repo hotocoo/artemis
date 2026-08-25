@@ -68,3 +68,13 @@ public sealed record RetentionSweepResult(
     IReadOnlyList<RetentionScopeDeletion> Scopes,
     bool SecureWipe,
     DateTimeOffset SweptAtUtc);
+
+/// <summary>
+/// The full outcome of walking the audit hash chain. Verification names the FIRST broken link so
+/// an operator knows where tampering begins instead of only that it happened.
+/// </summary>
+public sealed record AuditChainVerification(
+    bool Verified,
+    long EventCount,
+    long? FirstBrokenSequence,
+    string? Reason);

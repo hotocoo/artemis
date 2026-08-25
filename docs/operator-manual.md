@@ -137,6 +137,34 @@ countdown timer must never pick its own network destination.
 
 Evidence is redacted at creation (Authorization/Cookie headers, tokens, keys; strict mode available). Each scope's own `evidenceRetentionDays` governs how long that scope's evidence survives; audit entries form a SHA-256 hash chain you can verify at any time.
 
+### The audit ledger
+
+Every lifecycle event - assessments, triage decisions, baselines, regressions, schedules,
+retention sweeps, emergency stops - lands in one hash-chained ledger. Each entry hashes the
+previous entry's hash, so history cannot be rewritten without breaking every link that follows:
+
+```
+artemis audit verify            # walk the whole chain; exit 5 when it is broken
+artemis audit list --action finding. --limit 20   # narrow by action prefix / correlation id
+artemis audit export --format json --output ledger-archive.json   # complete ledger, oldest first
+```
+
+- **verify** reports the FIRST broken sequence and why: an edited payload fails its own content
+  hash at that entry; a deleted or reordered row breaks the link at its successor; deleting the
+  newest rows is exposed by the recorded chain head, which every append updates in the same
+  transaction precisely so a shortened tail cannot masquerade as "nothing ever happened".
+- **list** reads events newest-first with honest totals ("showing 20 of 412 stored event(s)");
+  filters narrow, they never reorder or reinterpret. The console Audit page drives the same read
+  with quick filters per event family.
+- **export** archives the complete ledger chronologically as JSON or CSV (RFC 4180 quoting) for
+  external auditors or compliance.
+
+Keep at least one export outside the machine that runs Artemis. Hashes prove stored history was
+not rewritten; they cannot by themselves prove rows were not deleted AND the chain head rewritten
+to match - only comparison against an external archive exposes that. When verification does fail,
+preserve the database as evidence: every finding, triage decision, and baseline derived from it is
+now suspect.
+
 Sweeping:
 
 - `artemis retention status` - per-scope outlook: configured window, the cutoff it implies now, and how many evidence rows already outlived it.
