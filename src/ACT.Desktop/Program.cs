@@ -85,6 +85,12 @@ app.MapGet("/findings/{id}", async (IServiceProvider sp, Guid id, string? triage
     await Pages.FindingDetail(sp, id, triaged));
 app.MapPost("/findings/{id}/triage", async (IServiceProvider sp, Guid id, HttpRequest request) =>
     await Pages.Triage(sp, id, request));
+app.MapGet("/baselines", async (IServiceProvider sp, string? created, string? error) =>
+    await Pages.Baselines(sp, created, error));
+app.MapGet("/baselines/compare", async (IServiceProvider sp, Guid assessment) =>
+    await Pages.BaselineCompare(sp, assessment));
+app.MapPost("/baselines/create", async (IServiceProvider sp, HttpRequest request) =>
+    await Pages.BaselineCreate(sp, request));
 app.MapGet("/audit", async (IServiceProvider sp) => await Pages.Audit(sp));
 app.MapGet("/schedules", async (IServiceProvider sp) => await Pages.Schedules(sp));
 app.MapGet("/config", (IServiceProvider sp) => Pages.Config(sp));
@@ -354,6 +360,151 @@ internal static class Pages
             return await RenderFindingDetail(sp, id, failure);
         }
     }
+
+    /// <summary>
+    /// Security baselines: one row per recent assessment with its scope's latest baseline and the
+    /// two operator actions - snapshot this assessment into a new baseline, or compare it against
+    /// the existing one. Creation accepts only fingerprints already dispositioned through triage,
+    /// so a baseline can never silently bless open issues.
+    /// </summary>
+    public static async Task<IResult> Baselines(IServiceProvider sp, string? created, string? error)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+        var assessments = await db.ListAssessmentsAsync(50);
+
+        var latestByScope = new Dictionary<Guid, SecurityBaseline>();
+        foreach (var scopeId in assessments.Select(static a => a.ScopeId).Distinct())
+        {
+            if (await db.GetLatestBaselineAsync(scopeId) is { } baseline)
+            {
+                latestByScope[scopeId] = baseline;
+            }
+        }
+
+        var b = new StringBuilder();
+        b.Append("<h1>Security Baselines</h1>");
+        if (created is not null)
+        {
+            b.Append("<p><b>Baseline stored.</b> It snapshots that assessment's observed services and ")
+                .Append("only the finding fingerprints an operator had dispositioned through triage. ")
+                .Append("Compare any later assessment of the same scope against it.</p>");
+        }
+
+        if (error is not null)
+        {
+            b.Append("<p style=\"color:#b71c1c\"><strong>Refused:</strong> ").Append(Esc(error)).Append("</p>");
+        }
+
+        b.Append("<p>A comparison lists service drift plus finding-level drift (new, regressed, resolved-or-unobserved) ")
+            .Append("at honest severities. Resolved entries remind you that absence alone cannot distinguish a fix ")
+            .Append("from checks that did not run.</p>");
+
+        var rows = new StringBuilder();
+        foreach (var assessment in assessments)
+        {
+            var baseline = latestByScope.GetValueOrDefault(assessment.ScopeId);
+            rows.Append("<tr>");
+            rows.Append($"<td><a href=\"/findings?assessment={assessment.AssessmentId}\">{Esc(assessment.Name)}</a></td>");
+            rows.Append($"<td>{Esc(assessment.State)}</td><td><code>{ShortId(assessment.ScopeId)}</code></td>");
+            rows.Append(baseline is null
+                ? "<td>-</td>"
+                : "<td>" + Esc(baseline.Name) + "<br><small>" + baseline.CreatedUtc.ToString("u")
+                    + " - " + baseline.ExpectedServices.Count + " services, "
+                    + baseline.AcceptedFindingFingerprints.Count + " accepted</small></td>");
+            rows.Append("<td>");
+            rows.Append("<form class=\"inline\" method=\"post\" action=\"/baselines/create\">");
+            rows.Append($"<input type=\"hidden\" name=\"assessment\" value=\"{assessment.AssessmentId}\" /> ");
+            rows.Append("<input type=\"text\" name=\"name\" style=\"max-width:12rem\" placeholder=\"optional name\" /> ");
+            rows.Append("<button type=\"submit\">Create from this run</button></form>");
+            if (baseline is not null)
+            {
+                rows.Append(" <a href=\"/baselines/compare?assessment=" + assessment.AssessmentId + "\">Compare</a>");
+            }
+
+            rows.Append("</td></tr>");
+        }
+
+        var table = "<table><tr><th>Assessment</th><th>State</th><th>Scope</th><th>Latest baseline for scope</th><th>Actions</th></tr>"
+            + rows + "</table>";
+        return Results.Content(
+            ArtemisConsoleLayout.Render("Baselines", "Baselines", b.ToString() + table), "text/html");
+    }
+
+    public static async Task<IResult> BaselineCompare(IServiceProvider sp, Guid assessment)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+        if (await db.GetAssessmentAsync(assessment) is not { } record)
+        {
+            return Results.NotFound("Assessment not found.");
+        }
+
+        string body;
+        try
+        {
+            var comparison = await BaselineOperations.CompareAsync(
+                db, assessment, null, "operator-console", CorrelationId.New());
+            var summary = comparison.Observations.Count == 0
+                ? "<p><b>No drift:</b> this assessment matches baseline <code>" + ShortId(comparison.BaselineId)
+                    + "</code> exactly. That never means the environment is secure.</p>"
+                : "<p><b>" + comparison.Observations.Count + " drift observation(s)</b> against baseline <code>"
+                    + ShortId(comparison.BaselineId) + "</code>.</p>";
+            var rows = new StringBuilder();
+            foreach (var observation in comparison.Observations)
+            {
+                rows.Append("<tr>");
+                rows.Append($"<td><span class=\"sev-{observation.SuggestedSeverity}\">{observation.SuggestedSeverity}</span></td>");
+                rows.Append("<td><code>").Append(Esc(observation.Kind)).Append("</code></td>");
+                rows.Append("<td>").Append(Esc(observation.Detail)).Append("</td></tr>");
+            }
+
+            var table = comparison.Observations.Count == 0
+                ? ""
+                : "<table><tr><th>Severity</th><th>Kind</th><th>Detail</th></tr>" + rows + "</table>";
+            body = "<h1>Baseline comparison - " + Esc(record.Name) + "</h1>" + summary + table;
+        }
+        catch (ActException ex)
+        {
+            body = "<h1>Baseline comparison - " + Esc(record.Name) + "</h1>"
+                + "<p style=\"color:#b71c1c\"><strong>Comparison refused:</strong> " + Esc(ex.SafeMessage) + "</p>";
+        }
+
+        return Results.Content(ArtemisConsoleLayout.Render("Baselines", "Baselines", body), "text/html");
+    }
+
+    /// <summary>Console entry into audited baseline creation; refusals re-render the page honestly.</summary>
+    public static async Task<IResult> BaselineCreate(IServiceProvider sp, HttpRequest request)
+    {
+        var form = await request.ReadFormAsync();
+        if (!Guid.TryParse(form["assessment"].ToString(), out var assessmentId))
+        {
+            return Results.BadRequest("Unknown assessment.");
+        }
+
+        var db = sp.GetRequiredService<ActDatabase>();
+        var assessment = await db.GetAssessmentAsync(assessmentId);
+        if (assessment is null)
+        {
+            return Results.Redirect("/baselines?error=" + Uri.EscapeDataString("assessment not found"), permanent: false);
+        }
+
+        var name = form["name"].ToString().Trim();
+        try
+        {
+            var baseline = await BaselineOperations.CreateAsync(
+                db,
+                assessment,
+                name.Length > 0 ? name : "baseline " + DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm 'UTC'"),
+                "operator-console",
+                CorrelationId.New());
+            return Results.Redirect("/baselines?created=" + baseline.BaselineId, permanent: false);
+        }
+        catch (ActException ex)
+        {
+            return Results.Redirect("/baselines?error=" + Uri.EscapeDataString(ex.SafeMessage), permanent: false);
+        }
+    }
+
+    private static string ShortId(Guid value) => value.ToString("N")[..8];
 
     public static async Task<IResult> Audit(IServiceProvider sp)
     {

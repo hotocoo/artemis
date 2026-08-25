@@ -154,6 +154,36 @@ public sealed partial class ActDatabase
             return latest;
         }, cancellationToken);
 
+    /// <summary>Returns one baseline by identifier within a scope, or null when unknown.</summary>
+    public Task<SecurityBaseline?> GetBaselineAsync(Guid scopeId, Guid baselineId, CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            command.CommandText =
+                "SELECT value_json FROM configurations WHERE key = $key";
+            command.Parameters.AddWithValue("$key", BaselineKey(scopeId, baselineId));
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            return await reader.ReadAsync(token).ConfigureAwait(false)
+                ? ActJson.Deserialize<SecurityBaseline>(reader.GetString(0), "baseline value_json")
+                : null;
+        }, cancellationToken);
+
+    /// <summary>Returns every stored baseline for one scope, oldest first.</summary>
+    public Task<IReadOnlyList<SecurityBaseline>> ListBaselinesAsync(Guid scopeId, CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            command.CommandText =
+                "SELECT value_json FROM configurations WHERE key LIKE $prefix ORDER BY updated_utc ASC";
+            command.Parameters.AddWithValue("$prefix", BaselineKeyPrefix + scopeId.ToString("N") + ":%");
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var baselines = new List<SecurityBaseline>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                baselines.Add(ActJson.Deserialize<SecurityBaseline>(reader.GetString(0), "baseline value_json"));
+            }
+
+            return (IReadOnlyList<SecurityBaseline>)[.. baselines.OrderBy(static b => b.CreatedUtc)];
+        }, cancellationToken);
+
     private static string BaselineKey(Guid scopeId, Guid baselineId) =>
         BaselineKeyPrefix + scopeId.ToString("N") + ":" + baselineId.ToString("N");
 

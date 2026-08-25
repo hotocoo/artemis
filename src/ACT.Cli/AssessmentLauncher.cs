@@ -89,6 +89,9 @@ public static class AssessmentLauncher
         // stop is in force until explicitly disarmed, and starting work it must immediately
         // cancel would be dishonest about what ran.
         var db = services.GetRequiredService<ActDatabase>();
+        // A fresh CLI process owns its readiness like every read command does; initialization
+        // is idempotent, so hosts that already ran it are unaffected.
+        await db.InitializeAsync(externalToken);
         var persistedStop = await db.GetConfigAsync<EmergencyStopFlag>(
             AssessmentCommands.EmergencyFlagKey, externalToken);
         if (emergency.IsArmed || persistedStop is not null)

@@ -75,6 +75,36 @@ observation events. Illegal transitions, no-op repeats, and unknown findings are
 list of allowed targets rather than silently accepted. On the console, the finding detail page
 offers only the transitions the lifecycle allows from the current status.
 
+### Baselines and drift
+
+A security baseline freezes one assessment's observed state: every service seen, plus only those
+finding fingerprints an operator has already dispositioned through triage (**AcceptedRisk** /
+**FalsePositive**). It can never silently bless open issues - untriaged findings keep surfacing as
+new drift until someone triages them and re-creates the baseline.
+
+```
+artemis baseline create --assessment ASSESSMENT_ID [--name NAME] [--actor OPERATOR]
+artemis baseline list --scope SCOPE_ID            # or: --assessment ASSESSMENT_ID
+artemis baseline compare --assessment ASSESSMENT_ID [--baseline BASELINE_ID]
+```
+
+Comparison runs one later assessment of the same scope against the stored snapshot and reports
+two drift classes side by side:
+
+- **Service drift** - a prohibited port answers (High) or an expected port went quiet (Medium).
+- **Finding drift** - NEW findings at their own technical severity (never inflated or discounted),
+  REGRESSED remediated issues detected again, and RESOLVED-or-unobserved accepted fingerprints at
+  Informational - worded honestly, because absence alone cannot distinguish a real fix from checks
+  that simply did not run this time.
+
+The console **Baselines** page drives the same operations: create a baseline from any recent run,
+then compare it against later runs with one click. Every create and compare lands in the
+hash-chained audit log (`baseline.created`, `baseline.compared`).
+
+`compare` is pipeline-friendly: exit code 0 when there is no drift, exit code 5 (gate failed)
+when any observation exists - so scheduled assessments can fail loudly on change instead of
+quietly collecting rows nobody reads.
+
 ## 5. Evidence, redaction, retention
 
 Evidence is redacted at creation (Authorization/Cookie headers, tokens, keys; strict mode available). Each scope's own `evidenceRetentionDays` governs how long that scope's evidence survives; audit entries form a SHA-256 hash chain you can verify at any time.
