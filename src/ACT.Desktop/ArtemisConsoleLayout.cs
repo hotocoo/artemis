@@ -16,6 +16,7 @@ internal static class ArtemisConsoleLayout
             ("/assessments", "Assessments"),
             ("/inventory", "Inventory"),
             ("/findings", "Findings"),
+            ("/reports", "Reports"),
             ("/regressions", "Regressions"),
             ("/baselines", "Baselines"),
             ("/schedules", "Schedules"),

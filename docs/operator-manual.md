@@ -39,6 +39,16 @@ During a run: every request passes rate limiting, scope verdicts, pinned DNS con
 - Console: `artemis-console` serves the operator UI on 127.0.0.1 only.
 - Reports: JSON, CSV, Markdown, HTML, SARIF 2.1. Coverage states distinguish tested / not tested / inaccessible / inconclusive / confirmed / inferred - reports never claim an environment is secure because checks passed.
 
+### Generating reports
+
+Reports assemble strictly from persisted rows and render deterministically per format:
+
+```
+artemis report generate --assessment ASSESSMENT_ID --format sarif --out ./reports
+```
+
+The console **Reports** page offers the same five formats (JSON, CSV, Markdown, HTML, SARIF) as one-click downloads for every stored assessment. Every generation - CLI or console - appends an audited `report.generated` entry to the hash chain, so the artifact trail is on the ledger next to everything else it summarizes. Generation fails closed when the assessment or its stored scope is missing: a report that cannot honestly describe its own scope is never produced.
+
 ### Reviewing discovered assets
 
 Every asset discovery and service observation lands in the inventory; both surfaces read the same persisted rows:
@@ -140,7 +150,7 @@ Evidence is redacted at creation (Authorization/Cookie headers, tokens, keys; st
 ### The audit ledger
 
 Every lifecycle event - assessments, triage decisions, baselines, regressions, schedules,
-retention sweeps, emergency stops - lands in one hash-chained ledger. Each entry hashes the
+retention sweeps, emergency stops, generated reports - lands in one hash-chained ledger. Each entry hashes the
 previous entry's hash, so history cannot be rewritten without breaking every link that follows:
 
 ```
