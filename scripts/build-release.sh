@@ -50,6 +50,19 @@ publish_one() {
   echo "published $name ($rid) -> $out"
 }
 
+stage_payload() {
+  # stage_payload <rid>
+  # Copy the published payload into the release directory BEFORE metadata is written, so
+  # each artifacts/release/<rid> is self-contained: the binaries sit next to the manifest,
+  # SHA256SUMS, and SBOM that describe them, 'sha256sum -c' verifies in place, and the
+  # uploaded/published release artifact carries the executables themselves.
+  local rid="$1"
+  local out="$OUTDIR/$rid"
+  rm -rf "$out"
+  mkdir -p "$out"
+  cp -R "$PUBDIR/$rid/." "$out/"
+}
+
 emit_metadata() {
   # emit_metadata <rid>
   local rid="$1"
@@ -131,6 +144,7 @@ PYEOF
 for rid in "${RIDS[@]}"; do
   publish_one src/ACT.Cli/ACT.Cli.csproj artemis "$rid"
   publish_one src/ACT.Desktop/ACT.Desktop.csproj artemis-console "$rid"
+  stage_payload "$rid"
   emit_metadata "$rid"
 done
 

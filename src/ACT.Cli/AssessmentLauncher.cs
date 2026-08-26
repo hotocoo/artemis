@@ -102,6 +102,22 @@ public static class AssessmentLauncher
                 + (persistedStop is { } flag ? " (armed " + flag.ArmedUtc + ": " + flag.Reason + ")" : "") + ".");
         }
 
+        // The documented operator flow is a single 'artemis assessment start --scope FILE':
+        // when this run was never registered by an explicit 'assessment create', register it
+        // here so the run's lifecycle transitions, coverage, and reports find their rows -
+        // every launch path shares this one registration guarantee by construction.
+        if (await db.GetAssessmentAsync(scope.AssessmentId, externalToken) is null)
+        {
+            await db.CreateAssessmentAsync(
+                new AssessmentRecord(
+                    scope.AssessmentId, scope.ScopeId,
+                    baseUrl?.Host ?? scope.TargetType.ToString(),
+                    AssessmentRunState.Created, DateTimeOffset.UtcNow, null, null,
+                    scope.OperatorIdentity, scope.Organization),
+                scope, externalToken);
+            // Reports read this typed copy back by assessment id; store it with the row.
+            await db.SetConfigAsync("scope:" + scope.AssessmentId.ToString("N"), scope, externalToken);
+        }
         var gate = new PolicyGateAdapter(
             services.GetRequiredService<IPolicyEvaluator>(), emergency);
 

@@ -17,15 +17,26 @@ namespace ACT.Cli.Composition;
 /// </summary>
 public static class ArtemisComposition
 {
+    /// <summary>
+    /// The single database-location rule for every surface: explicit configuration wins,
+    /// otherwise the database lives beside the installed executable - so CLI reads, doctor,
+    /// reports, the console host, and the engine always open the same file no matter which
+    /// working directory an operator launched from.
+    /// </summary>
+    public static string ResolveDatabasePath(IConfiguration configuration)
+    {
+        var rawPath = configuration["Act:Storage:DatabasePath"] ?? "artemis.db";
+        return Path.IsPathRooted(rawPath)
+            ? rawPath
+            : Path.Combine(AppContext.BaseDirectory, rawPath);
+    }
+
     public static IServiceCollection AddArtemisPersistence(this IServiceCollection services)
     {
         services.AddSingleton<ActDatabase>(sp =>
         {
             var configuration = sp.GetRequiredService<IConfiguration>();
-            var rawPath = configuration["Act:Storage:DatabasePath"] ?? "artemis.db";
-            var databasePath = Path.IsPathRooted(rawPath)
-                ? rawPath
-                : Path.Combine(AppContext.BaseDirectory, rawPath);
+            var databasePath = ResolveDatabasePath(configuration);
             var walEnabled = !string.Equals(configuration["Act:Storage:WalEnabled"], "false", StringComparison.OrdinalIgnoreCase);
             return new ActDatabase(databasePath, new StorageOptions { DatabasePath = databasePath, WalEnabled = walEnabled });
         });

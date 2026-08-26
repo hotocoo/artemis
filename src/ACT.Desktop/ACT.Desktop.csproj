@@ -1,6 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- The operator-facing executable name used by docs, release manifests, and PATH installs;
+         without it the single-file publish would ship as ACT.Desktop(.exe). -->
+    <AssemblyName>artemis-console</AssemblyName>
+    <RootNamespace>ACT.Desktop</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../ACT.Contracts/ACT.Contracts.csproj" />
