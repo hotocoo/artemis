@@ -61,6 +61,26 @@ artemis --json asset list                   # full records incl. per-service ban
 
 The console **Inventory** page shows the same rows with an assessment filter. Out-of-scope discoveries are never hidden: they stay listed with an explicit **OUT OF SCOPE** marker (the CLI tags them `OUT-OF-SCOPE`) because "the scanner reached something it should not have" is a scope-definition defect you must see, not a row to lose. The inventory is read-only by design - corrections belong to the scope configuration and the next assessment, not to history.
 
+### The check execution ledger (coverage)
+
+Every check outcome - completed, skipped, failed closed, timed out - is recorded as it happened.
+That ledger is the only source of coverage truth:
+
+```
+artemis coverage show --assessment ASSESSMENT_ID [--json]
+```
+
+The output lists every recorded run with its true outcome and request footprint, honest verification
+counts derived from those rows only (**tested** = executions that examined targets; **not tested** =
+runs skipped before touching anything; **inaccessible** = timeouts; **inconclusive** = fail-closed
+containment), plus every registered check **with no recorded execution** in this assessment. The
+reason a check never ran is deliberately not guessed - the ledger proves only that nothing was
+recorded. An assessment that executed nothing shows zeros everywhere, never a quiet "fully covered".
+
+The console **Coverage** page drives the same read per assessment. Every generated report (JSON /
+CSV / Markdown / HTML / SARIF, from either surface) computes its coverage section from this same
+ledger, so a report can never claim more testing than was actually recorded.
+
 ### Triaging findings
 
 Triage is an explicit, audited operator decision - the engine never invents one:

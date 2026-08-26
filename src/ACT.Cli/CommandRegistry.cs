@@ -27,6 +27,7 @@ public static class CommandRegistry
         Register("assessment", AssessmentCommands.Run);
         Register("check", CheckCommand.Run);
         Register("finding", FindingCommands.Run);
+        Register("coverage", CoverageCommands.Run);
         Register("audit", AuditCommands.Run);
         Register("asset", AssetCommands.Run);
         Register("baseline", BaselineCommands.Run);
@@ -68,6 +69,7 @@ public static class HelpPrinter
         "assessment" => "create, start, status, emergency stop and disarm assessments",
         "check" => "list built-in security checks",
         "finding" => "list, show, and triage stored findings",
+        "coverage" => "show one assessment's check execution ledger and honest verification counts",
         "asset" => "list discovered assets with their observed services",
         "audit" => "verify, list and export the hash-chained audit ledger",
         "baseline" => "create security baselines and compare assessments against them",
