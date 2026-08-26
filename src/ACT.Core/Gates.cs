@@ -150,5 +150,11 @@ public interface IAssessmentRecorder : IAssessmentLedger
 
     Task RecordCheckRunAsync(SecurityCheckResult result, Guid assessmentId, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Persists the plan's exclusions as they were decided, BEFORE any work runs: why a registered
+    /// check never records an execution must be a stored fact, not a gap every surface guesses at.
+    /// </summary>
+    Task RecordPlanExclusionsAsync(Guid assessmentId, IReadOnlyList<ExclusionDecision> exclusions, CancellationToken cancellationToken);
+
     Task SetAssessmentStateAsync(Guid assessmentId, AssessmentRunState state, CancellationToken cancellationToken);
 }

@@ -125,7 +125,7 @@ public sealed class PersistenceTests
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'");
 
             // One row per shipped migration; append to Migrations.Ordered and this number grows.
-            Assert.Equal(3, migrationRows);
+            Assert.Equal(4, migrationRows);
             Assert.Equal(tablesAfterFirst, tablesAfterSecond);
         }
     }
@@ -189,7 +189,7 @@ public sealed class PersistenceTests
                     }
                 }
 
-                Assert.Equal([1, 2, 3], versions); // the whole chain reapplied in order
+                Assert.Equal([1, 2, 3, 4], versions); // the whole chain reapplied in order
 
                 // Pre-existing rows survive untouched; the lifecycle works on them immediately.
                 Assert.Null(await upgraded.GetTriageAsync(finding.FindingId));

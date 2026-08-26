@@ -44,8 +44,9 @@ public static class CoverageCommands
             Console.Error.WriteLine();
             Console.Error.WriteLine("Prints exactly what the check execution ledger proves about this assessment:");
             Console.Error.WriteLine("every recorded run with its true outcome (completed, skipped, failed closed,");
-            Console.Error.WriteLine("timed out), honest verification counts derived from those rows only, and every");
-            Console.Error.WriteLine("registered check with no recorded execution. Coverage is never estimated.");
+            Console.Error.WriteLine("timed out), the persisted planning decisions that explain why a registered");
+            Console.Error.WriteLine("check never ran, honest verification counts derived from those rows only, and");
+            Console.Error.WriteLine("every still-unexplained check with no recorded execution. Coverage is never estimated.");
             return ExitCodes.UsageError;
         }
     }
@@ -80,11 +81,29 @@ public static class CoverageCommands
             }
         }
 
-        if (snapshot.NeverExecuted.Count > 0)
+        if (snapshot.PlanExclusions.Count > 0)
         {
             text.AppendLine();
-            text.AppendLine("registered checks with NO recorded execution (reason not persisted - excluded at planning or not applicable):");
-            foreach (var meta in snapshot.NeverExecuted)
+            text.AppendLine("excluded at planning time (persisted orchestrator decisions):");
+            text.AppendLine(string.Format("  {0,-26} {1,-22} {2,6} {3}",
+                "CHECK", "REASON", "TIMES", "DETAIL"));
+            foreach (var row in CoverageOperations.SummarizeExclusions(snapshot.PlanExclusions))
+            {
+                text.AppendLine(string.Format("  {0,-26} {1,-22} {2,6} {3}",
+                    Truncate(row.CheckId, 26),
+                    Truncate(row.ReasonCode, 22),
+                    row.Occurrences,
+                    Truncate(row.Detail, 58)));
+            }
+        }
+
+        if (snapshot.UnexplainedNeverExecuted.Count > 0)
+        {
+            text.AppendLine();
+            text.AppendLine(snapshot.PlanExclusions.Count > 0
+                ? "registered checks with NO recorded execution and NO persisted planning reason:"
+                : "registered checks with NO recorded execution (no persisted planning reason - pre-ledger assessment):");
+            foreach (var meta in snapshot.UnexplainedNeverExecuted)
             {
                 text.AppendLine("  " + meta.Id.Value + " (" + meta.Category + ", " + meta.SafetyLevel + ")");
             }
@@ -127,7 +146,14 @@ public static class CoverageCommands
                 r.TargetsExamined,
                 note = r.FailureSummarySafe
             }),
-            neverExecutedChecks = snapshot.NeverExecuted.Select(m => new
+            planningExclusions = CoverageOperations.SummarizeExclusions(snapshot.PlanExclusions).Select(e => new
+            {
+                checkId = e.CheckId,
+                reasonCode = e.ReasonCode,
+                occurrences = e.Occurrences,
+                detail = e.Detail
+            }),
+            neverExecutedChecks = snapshot.UnexplainedNeverExecuted.Select(m => new
             {
                 id = m.Id.Value,
                 name = m.Name,

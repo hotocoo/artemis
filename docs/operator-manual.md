@@ -73,9 +73,12 @@ artemis coverage show --assessment ASSESSMENT_ID [--json]
 The output lists every recorded run with its true outcome and request footprint, honest verification
 counts derived from those rows only (**tested** = executions that examined targets; **not tested** =
 runs skipped before touching anything; **inaccessible** = timeouts; **inconclusive** = fail-closed
-containment), plus every registered check **with no recorded execution** in this assessment. The
-reason a check never ran is deliberately not guessed - the ledger proves only that nothing was
-recorded. An assessment that executed nothing shows zeros everywhere, never a quiet "fully covered".
+containment), plus the **persisted planning decisions** that say why a check was kept out of the
+execution plan, and every registered check still **with no recorded execution and no stored reason**.
+The engine records each planning exclusion BEFORE any work runs, so a missing check is either
+explained by a stored decision or shown as an explicit gap - never papered over with a guess
+(assessments recorded before this ledger existed have no rows, and the surfaces say so). An
+assessment that executed nothing shows zeros everywhere, never a quiet "fully covered".
 
 The console **Coverage** page drives the same read per assessment. Every generated report (JSON /
 CSV / Markdown / HTML / SARIF, from either surface) computes its coverage section from this same

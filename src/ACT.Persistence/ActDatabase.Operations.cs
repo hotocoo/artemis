@@ -596,6 +596,100 @@ public sealed partial class ActDatabase
         IsCurrent: row.BoolOf("is_current"),
         Note: row.Str("note"));
 
+    // ---------- planning exclusions ----------
+
+    /// <summary>
+    /// Persists one assessment's planning exclusions in ONE transaction: every check the
+    /// orchestrator kept out of the execution plan, exactly as decided, with its deterministic
+    /// reason. Rows are plain inserts - a repeated save for the same assessment would duplicate
+    /// rows visibly rather than silently overwrite history. Fails closed on empty identifiers.
+    /// </summary>
+    public Task SavePlanExclusionsAsync(
+        IReadOnlyList<PlanExclusionRecord> exclusions, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(exclusions);
+        if (exclusions.Count == 0)
+        {
+            throw ActException.FailClosed(ErrorCategory.Persistence,
+                "The planning-exclusion batch is empty.",
+                "SavePlanExclusions requires at least one recorded exclusion; an empty plan is simply not saved.");
+        }
+
+        foreach (var exclusion in exclusions)
+        {
+            if (exclusion.ExclusionId == Guid.Empty || string.IsNullOrWhiteSpace(exclusion.CheckId)
+                || string.IsNullOrWhiteSpace(exclusion.ReasonCode) || string.IsNullOrWhiteSpace(exclusion.Detail))
+            {
+                throw ActException.FailClosed(ErrorCategory.Persistence,
+                    "A planning exclusion is missing required fields.",
+                    $"Exclusion {exclusion.ExclusionId} requires a non-empty check id, reason code, and detail.");
+            }
+        }
+
+        return WriteAsync(async (connection, transaction, token) =>
+        {
+            const string sql = """
+                INSERT INTO plan_exclusions(exclusion_id, assessment_id, check_id, reason_code, detail, excluded_utc)
+                VALUES($id, $assessment_id, $check_id, $reason_code, $detail, $excluded_utc)
+                """;
+            foreach (var exclusion in exclusions)
+            {
+                await using var command = Command(connection, transaction, sql);
+                command.Parameters.AddWithValue("$id", exclusion.ExclusionId.ToString());
+                command.Parameters.AddWithValue("$assessment_id", exclusion.AssessmentId.ToString());
+                command.Parameters.AddWithValue("$check_id", exclusion.CheckId);
+                command.Parameters.AddWithValue("$reason_code", exclusion.ReasonCode);
+                command.Parameters.AddWithValue("$detail", exclusion.Detail);
+                command.Parameters.AddWithValue("$excluded_utc", Db(exclusion.ExcludedUtc));
+                await command.ExecuteNonQueryAsync(token).ConfigureAwait(false);
+            }
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// Lists persisted planning exclusions, newest first, optionally scoped to one assessment.
+    /// This is the read surface that turns "registered check with no recorded execution" from a
+    /// mystery into a stored fact - or, when no rows exist for a pre-v4 assessment, an honest gap.
+    /// </summary>
+    public Task<IReadOnlyList<PlanExclusionRecord>> ListPlanExclusionsAsync(
+        Guid? assessmentId = null,
+        int limit = 10_000,
+        CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            RequirePositive(limit, "limit");
+            if (assessmentId is { } assessment)
+            {
+                command.CommandText =
+                    "SELECT * FROM plan_exclusions WHERE assessment_id = $assessment "
+                    + "ORDER BY excluded_utc DESC, check_id ASC LIMIT $limit";
+                command.Parameters.AddWithValue("$assessment", assessment.ToString());
+            }
+            else
+            {
+                command.CommandText =
+                    "SELECT * FROM plan_exclusions ORDER BY excluded_utc DESC, check_id ASC LIMIT $limit";
+            }
+
+            command.Parameters.AddWithValue("$limit", (long)limit);
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var results = new List<PlanExclusionRecord>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                results.Add(MapPlanExclusion(reader));
+            }
+
+            return (IReadOnlyList<PlanExclusionRecord>)results;
+        }, cancellationToken);
+
+    private static PlanExclusionRecord MapPlanExclusion(SqliteDataReader row) => new(
+        ExclusionId: row.GuidOf("exclusion_id"),
+        AssessmentId: row.GuidOf("assessment_id"),
+        CheckId: row.Str("check_id"),
+        ReasonCode: row.Str("reason_code"),
+        Detail: row.Str("detail"),
+        ExcludedUtc: row.TimeOf("excluded_utc"));
+
     // ---------- dashboard ----------
 
     /// <summary>Computes operator dashboard aggregates exclusively from persisted rows via one SQL statement.</summary>

@@ -24,16 +24,39 @@ public static class CoverageOperations
         int TotalRuns);
 
     /// <summary>
+    /// One persisted planning decision grouped for display: a (check, reason) pair with how often
+    /// the orchestrator recorded it for this assessment and one faithful detail sample.
+    /// </summary>
+    public sealed record PlanExclusionRow(string CheckId, string ReasonCode, int Occurrences, string Detail);
+
+    /// <summary>
     /// One assessment's full coverage snapshot: raw ledger rows, honest aggregates, the derived
-    /// <see cref="VerificationCoverage"/> reports render, and every registered catalog check with
-    /// no recorded execution in this assessment.
+    /// <see cref="VerificationCoverage"/> reports render, every registered catalog check with no
+    /// recorded execution in this assessment, and the persisted planning exclusions that say WHY
+    /// absent checks were kept out of the plan.
     /// </summary>
     public sealed record CoverageSnapshot(
         AssessmentRecord Assessment,
         IReadOnlyList<CheckRunRecord> Runs,
         ExecutionSummary Summary,
         VerificationCoverage Coverage,
-        IReadOnlyList<SecurityCheckMetadata> NeverExecuted);
+        IReadOnlyList<SecurityCheckMetadata> NeverExecuted,
+        IReadOnlyList<PlanExclusionRecord> PlanExclusions)
+    {
+        /// <summary>
+        /// Registered checks with no recorded execution AND no persisted planning reason. For
+        /// pre-v4 assessments nothing was ever recorded about them; that gap stays visible
+        /// instead of being papered over with a guess.
+        /// </summary>
+        public IReadOnlyList<SecurityCheckMetadata> UnexplainedNeverExecuted
+        {
+            get
+            {
+                var explained = PlanExclusions.Select(static e => e.CheckId).ToHashSet(StringComparer.Ordinal);
+                return [.. NeverExecuted.Where(m => !explained.Contains(m.Id.Value))];
+            }
+        }
+    }
 
     /// <summary>
     /// Builds the snapshot for one assessment. Fails closed when the assessment does not exist -
@@ -52,13 +75,32 @@ public static class CoverageOperations
         var runs = await db.ListCheckRunsAsync(assessmentId, 100_000);
         var findings = await db.ListFindingsAsync(assessmentId, limit: 100_000);
         var neverExecuted = UnexecutedCatalogChecks(CheckRegistry.Catalog(), runs);
+        var planExclusions = await db.ListPlanExclusionsAsync(assessmentId);
 
         return new CoverageSnapshot(
             assessment,
             runs,
             Summarize(runs),
             ComputeVerificationCoverage(runs, findings),
-            neverExecuted);
+            neverExecuted,
+            planExclusions);
+    }
+
+    /// <summary>
+    /// Groups persisted planning decisions into deterministic (check, reason) rows for text and
+    /// HTML surfaces: ordinal order by check id then reason code, honest occurrence counts, and
+    /// the first recorded detail as the sample - details within one group come from one decision
+    /// rule and are worded identically by construction.
+    /// </summary>
+    public static IReadOnlyList<PlanExclusionRow> SummarizeExclusions(IReadOnlyList<PlanExclusionRecord> exclusions)
+    {
+        ArgumentNullException.ThrowIfNull(exclusions);
+
+        return [.. exclusions
+            .GroupBy(e => (e.CheckId, e.ReasonCode))
+            .OrderBy(g => g.Key.CheckId, StringComparer.Ordinal)
+            .ThenBy(g => g.Key.ReasonCode, StringComparer.Ordinal)
+            .Select(g => new PlanExclusionRow(g.Key.CheckId, g.Key.ReasonCode, g.Count(), g.First().Detail))];
     }
 
     /// <summary>
@@ -120,9 +162,9 @@ public static class CoverageOperations
     }
 
     /// <summary>
-    /// Registered built-in checks with no recorded execution in this assessment. The reason a
-    /// check never ran (planning exclusion, unsupported target kind) is intentionally NOT guessed
-    /// here - the row says only what the ledger proves: nothing was recorded.
+    /// Registered built-in checks with no recorded execution in this assessment. The row itself
+    /// still says only what the run ledger proves - nothing was recorded; WHY is answered
+    /// separately by the persisted planning-exclusion ledger carried alongside in the snapshot.
     /// </summary>
     public static IReadOnlyList<SecurityCheckMetadata> UnexecutedCatalogChecks(
         IReadOnlyList<SecurityCheckMetadata> catalog,

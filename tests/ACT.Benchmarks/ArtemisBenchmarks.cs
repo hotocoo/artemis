@@ -165,7 +165,9 @@ public static class Program
 {
     public static void Main(string[] args)
     {
-        BenchmarkDotNet.Running.BenchmarkRunner.Run(typeof(Program).Assembly);
+        // Route the real command line through BenchmarkSwitcher so documented invocations like
+        // '--filter *PlanExclusion*' select benchmarks instead of every class running always.
+        BenchmarkDotNet.Running.BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args);
     }
 }
 
