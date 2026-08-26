@@ -51,6 +51,7 @@ artemis scope validate --file samples/scope.example.json
 - docs/architecture.md - module map and data flow
 - docs/operator-manual.md - running assessments safely
 - docs/developer-manual.md - building, testing, contributing checks
+- CHANGELOG.md - release history (Keep a Changelog format; SemVer over ACT.Contracts)
 
 ## Status
 

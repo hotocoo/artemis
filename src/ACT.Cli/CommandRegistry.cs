@@ -8,7 +8,12 @@ namespace ACT.Cli;
 public static class CommandMetadata
 {
     public const string ProductName = "Artemis";
-    public const string Version = "1.0.0";
+    /// <summary>
+    /// Product version, single-sourced from the assembly version set in Directory.Build.props so
+    /// CLI output, report metadata, and CHANGELOG.md can never drift apart.
+    /// </summary>
+    public static readonly string Version =
+        (typeof(CommandMetadata).Assembly.GetName().Version ?? new Version(1, 0, 0)).ToString(3);
     public static string VersionLine => $"{ProductName} {Version} - autonomous defensive security assessment";
 }
 
