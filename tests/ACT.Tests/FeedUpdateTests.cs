@@ -122,7 +122,9 @@ public sealed class FeedUpdateTests : IDisposable
         var services = new ServiceCollection();
         services.AddSingleton<IConfiguration>(configuration);
         services.AddSingleton(db);
-        services.AddSingleton(new GlobalOptions());
+        // Quiet: command output must stay off the process-wide Console.Out - parallel unit
+        // tests capture that stream and parse it, so any stray line breaks their JSON reads.
+        services.AddSingleton(new GlobalOptions { Quiet = true });
         return services.BuildServiceProvider();
     }
 
