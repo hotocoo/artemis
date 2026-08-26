@@ -42,18 +42,16 @@ public static class ReportOperations
         var findings = await db.ListFindingsAsync(assessmentId, null, null, 100_000);
         var metrics = await db.GetMetricsAsync(assessmentId);
 
+        // Coverage is computed from the persisted check execution ledger - never estimated. A
+        // report claims exactly as much testing as the engine recorded, and no more.
+        var checkRuns = await db.ListCheckRunsAsync(assessmentId, 100_000);
+
         var input = new ReportInput(
             record,
             scope,
             findings.Select(static f => new FindingWithEvidence(f, [])).ToList(),
             metrics,
-            new VerificationCoverage(
-                Tested: findings.Count,
-                NotTested: 0,
-                Inaccessible: 0,
-                Inconclusive: 0,
-                Confirmed: findings.Count(static f => f.Status == FindingStatus.Confirmed),
-                Inferred: findings.Count(static f => f.Confidence != ConfidenceLevel.High)),
+            CoverageOperations.ComputeVerificationCoverage(checkRuns, findings),
             Limitations: "Scope-limited assessment; absence of findings does not imply absence of vulnerabilities.",
             DateTimeOffset.UtcNow,
             CommandMetadata.Version);
@@ -69,7 +67,8 @@ public static class ReportOperations
             Action: "report.generated",
             ObjectType: "assessment",
             ObjectId: assessmentId.ToString(),
-            Result: format + " report; " + findings.Count + " finding(s) included"
+            Result: format + " report; " + findings.Count + " finding(s) included; "
+                + checkRuns.Count + " recorded check run(s)"
                 + (writtenPath is null ? "" : "; written " + writtenPath),
             Correlation: correlation));
 

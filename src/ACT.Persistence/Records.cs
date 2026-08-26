@@ -30,6 +30,23 @@ public sealed record RegressionTestRunRecord(
     VerificationState Result,
     string Detail);
 
+/// <summary>
+/// One recorded execution of a security check within an assessment, exactly as the engine reported
+/// it - including skips, fail-closed containment, and timeouts. This ledger is the factual basis
+/// of every honest coverage statement: coverage numbers may only count executions that were
+/// actually recorded here, never estimates or findings relabeled as tests.
+/// </summary>
+public sealed record CheckRunRecord(
+    Guid CheckRunId,
+    Guid AssessmentId,
+    string CheckId,
+    CheckExecutionStatus Status,
+    DateTimeOffset StartedUtc,
+    DateTimeOffset CompletedUtc,
+    string? FailureSummarySafe,
+    long RequestCount,
+    int TargetsExamined);
+
 /// <summary>A configured advisory-feed source as persisted locally.</summary>
 public sealed record FeedRecord(
     string Name,

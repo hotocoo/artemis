@@ -85,6 +85,7 @@ app.MapGet("/findings/{id}", async (IServiceProvider sp, Guid id, string? triage
     await Pages.FindingDetail(sp, id, triaged));
 app.MapPost("/findings/{id}/triage", async (IServiceProvider sp, Guid id, HttpRequest request) =>
     await Pages.Triage(sp, id, request));
+app.MapGet("/coverage", async (IServiceProvider sp, string? assessment) => await Pages.Coverage(sp, assessment));
 app.MapGet("/regressions", async (IServiceProvider sp) => await Pages.Regressions(sp));
 app.MapPost("/regressions/{id}/toggle", async (IServiceProvider sp, Guid id) =>
     await Pages.RegressionToggle(sp, id));
@@ -594,6 +595,126 @@ internal static class Pages
         {
             return Results.NotFound(ex.SafeMessage);
         }
+    }
+
+    /// <summary>
+    /// The check execution ledger: exactly what ran, what was skipped, and what failed closed for
+    /// one assessment, straight from persisted rows. Coverage claims here are grounded in recorded
+    /// executions only - an empty ledger renders as zeros and a visible list of registered checks
+    /// with no recorded execution, never as a quiet "everything was tested".
+    /// </summary>
+    public static async Task<IResult> Coverage(IServiceProvider sp, string? assessment)
+    {
+        var db = sp.GetRequiredService<ActDatabase>();
+
+        var b = new StringBuilder();
+        b.Append("<h1>Coverage</h1>");
+        b.Append("<p>The check execution ledger per assessment: every recorded run with its true ")
+            .Append("outcome. Verification counts derive from these rows only - coverage is never ")
+            .Append("estimated, and checks that never executed stay visible instead of silent.</p>");
+
+        if (!Guid.TryParse(assessment, out var assessmentId))
+        {
+            var assessments = await db.ListAssessmentsAsync(50);
+            if (assessments.Count == 0)
+            {
+                b.Append("<p>No assessments stored yet. Start one with <code>artemis assessment start --scope my-scope.json</code>.</p>");
+            }
+            else
+            {
+                var rows = new StringBuilder();
+                foreach (var a in assessments)
+                {
+                    rows.Append("<tr><td><a href=\"/coverage?assessment=").Append(a.AssessmentId).Append("\">")
+                        .Append(Esc(a.Name)).Append("</a></td><td>").Append(Esc(a.State))
+                        .Append("</td><td>").Append(Esc(a.Organization))
+                        .Append("</td><td>").Append(Esc(a.CreatedUtc.ToLocalTime().ToString("u"))).Append("</td></tr>");
+                }
+
+                b.Append("<table><tr><th>Assessment</th><th>State</th><th>Organization</th><th>Created</th></tr>")
+                    .Append(rows).Append("</table>");
+            }
+
+            return Results.Content(ArtemisConsoleLayout.Render("Coverage", "Coverage", b.ToString()), "text/html");
+        }
+
+        CoverageOperations.CoverageSnapshot snapshot;
+        try
+        {
+            snapshot = await CoverageOperations.BuildAsync(db, assessmentId);
+        }
+        catch (ActException ex)
+        {
+            return Results.NotFound(ex.SafeMessage);
+        }
+
+        var s = snapshot.Summary;
+        b.Append("<p style=\"color:#667\">Assessment <strong>").Append(Esc(snapshot.Assessment.Name))
+            .Append("</strong> (state ").Append(Esc(snapshot.Assessment.State)).Append(")</p>");
+        b.Append("<div class=\"cards\">");
+        foreach (var (label, value) in new[]
+                 {
+                     ("Executed", s.Executed), ("Skipped", s.Skipped), ("Failed closed", s.FailedClosed),
+                     ("Timed out", s.TimedOut), ("Requests sent", s.RequestsSent), ("Targets examined", s.TargetsExamined)
+                 })
+        {
+            b.Append($"<div class=\"card\"><b>{Esc(value)}</b>{Esc(label)}</div>");
+        }
+
+        b.Append("</div>");
+
+        if (snapshot.Runs.Count > 0)
+        {
+            var rows = new StringBuilder();
+            foreach (var run in snapshot.Runs)
+            {
+                var color = run.Status switch
+                {
+                    CheckExecutionStatus.Completed => "#2e7d32",
+                    CheckExecutionStatus.CompletedWithWarnings => "#b26a00",
+                    CheckExecutionStatus.Failed_FailedClosed or CheckExecutionStatus.TimedOut => "#c62828",
+                    _ => "#5b6470"
+                };
+                rows.Append("<tr><td><code>").Append(Esc(run.CheckId)).Append("</code></td>")
+                    .Append("<td style=\"color:").Append(color).Append("\"><strong>").Append(Esc(run.Status)).Append("</strong></td>")
+                    .Append("<td>").Append(Esc(run.StartedUtc.ToLocalTime().ToString("u"))).Append("</td>")
+                    .Append("<td>").Append(Esc(run.RequestCount)).Append("</td>")
+                    .Append("<td>").Append(Esc(run.TargetsExamined)).Append("</td>")
+                    .Append("<td>").Append(Esc(run.FailureSummarySafe ?? "-")).Append("</td></tr>");
+            }
+
+            b.Append("<table><tr><th>Check</th><th>Outcome</th><th>Started</th><th>Requests</th><th>Targets</th><th>Note</th></tr>")
+                .Append(rows).Append("</table>");
+        }
+        else
+        {
+            b.Append("<p>No check executions recorded for this assessment - every count below stays at zero ")
+                .Append("because the ledger proves nothing ran.</p>");
+        }
+
+        if (snapshot.NeverExecuted.Count > 0)
+        {
+            b.Append("<h2>Registered checks with no recorded execution</h2>");
+            b.Append("<p style=\"color:#667\">The reason is not persisted; the ledger proves only that ")
+                .Append("nothing was recorded for these ids in this assessment.</p>");
+            var rows = new StringBuilder();
+            foreach (var meta in snapshot.NeverExecuted)
+            {
+                rows.Append("<tr><td><code>").Append(Esc(meta.Id.Value)).Append("</code></td><td>")
+                    .Append(Esc(meta.Name)).Append("</td><td>").Append(Esc(meta.Category))
+                    .Append("</td><td>").Append(Esc(meta.SafetyLevel)).Append("</td></tr>");
+            }
+
+            b.Append("<table><tr><th>Check id</th><th>Name</th><th>Category</th><th>Safety</th></tr>")
+                .Append(rows).Append("</table>");
+        }
+
+        var c = snapshot.Coverage;
+        b.Append("<h2>Verification counts</h2>");
+        b.Append("<p>").Append(Esc(CoverageOperations.VerificationCountsLine(c)))
+            .Append(". The same numbers back every generated report.</p>");
+
+        return Results.Content(ArtemisConsoleLayout.Render("Coverage", "Coverage", b.ToString()), "text/html");
     }
 
     /// <summary>

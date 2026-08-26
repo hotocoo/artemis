@@ -660,6 +660,53 @@ public sealed partial class ActDatabase : IAsyncDisposable
         }, cancellationToken);
     }
 
+    /// <summary>
+    /// Lists recorded security-check executions, newest first, optionally scoped to one assessment.
+    /// The ledger is append-only at run time; this read surface is what turns it into honest
+    /// coverage: what actually ran, what was skipped, and what failed closed - per stored row.
+    /// </summary>
+    public Task<IReadOnlyList<CheckRunRecord>> ListCheckRunsAsync(
+        Guid? assessmentId = null,
+        int limit = 500,
+        CancellationToken cancellationToken = default) =>
+        ReadAsync(async (command, token) =>
+        {
+            RequirePositive(limit, "limit");
+            if (assessmentId is { } assessment)
+            {
+                command.CommandText = """
+                    SELECT * FROM check_runs WHERE assessment_id = $assessment
+                    ORDER BY started_utc DESC, check_run_id LIMIT $limit
+                    """;
+                command.Parameters.AddWithValue("$assessment", assessment.ToString());
+            }
+            else
+            {
+                command.CommandText = "SELECT * FROM check_runs ORDER BY started_utc DESC, check_run_id LIMIT $limit";
+            }
+
+            command.Parameters.AddWithValue("$limit", (long)limit);
+            await using var reader = await command.ExecuteReaderAsync(token).ConfigureAwait(false);
+            var results = new List<CheckRunRecord>();
+            while (await reader.ReadAsync(token).ConfigureAwait(false))
+            {
+                results.Add(MapCheckRun(reader));
+            }
+
+            return (IReadOnlyList<CheckRunRecord>)results;
+        }, cancellationToken);
+
+    private static CheckRunRecord MapCheckRun(SqliteDataReader row) => new(
+        CheckRunId: row.GuidOf("check_run_id"),
+        AssessmentId: row.GuidOf("assessment_id"),
+        CheckId: row.Str("check_id"),
+        Status: ActValues.Enum<CheckExecutionStatus>(row.Str("status"), "status"),
+        StartedUtc: row.TimeOf("started_utc"),
+        CompletedUtc: row.TimeOf("completed_utc"),
+        FailureSummarySafe: row.StrOrNull("failure_summary"),
+        RequestCount: row.IntOf("request_count"),
+        TargetsExamined: (int)row.IntOf("targets_examined"));
+
     // ---------- findings ----------
 
     /// <summary>
