@@ -1,4 +1,5 @@
 using ACT.Contracts;
+using ACT.Core;
 using ACT.Evidence;
 using ACT.Policy;
 using ACT.Risk;
@@ -245,18 +246,81 @@ public class PolicyRiskEvidenceTests
     [Fact]
     public void EmergencyStopSurvivesConcurrentUse()
     {
-        var stop = new EmergencyStop();
+        using var stop = new EmergencyStop();
         var reasons = new[] { "r0", "r1", "r2", "r3", "r4" };
-        Parallel.For(0, 128, i =>
+        Parallel.For(0, 256, i =>
         {
             stop.Arm(reasons[i % reasons.Length]);
             var source = stop.TokenSource;
+            // Every one of these touched a disposed source before retirement semantics:
+            // Token threw ObjectDisposedException when a concurrent Disarm won the race.
             _ = source.Token.IsCancellationRequested;
-            _ = stop.IsArmed;
+            using (source.Token.Register(static () => { }))
+            {
+                _ = stop.IsArmed;
+                _ = stop.Reason;
+            }
             stop.Disarm("concurrent-operator");
         });
         Assert.False(stop.IsArmed);
         Assert.False(stop.TokenSource.Token.IsCancellationRequested);
+    }
+
+    [Fact]
+    public void SourceObtainedBeforeDisarmStaysUsableAfterwards()
+    {
+        var stop = new EmergencyStop();
+        var source = stop.TokenSource;
+        var cancelled = false;
+        using (source.Token.Register(() => cancelled = true))
+        {
+            stop.Arm("incident");
+            Assert.True(cancelled);
+        }
+
+        stop.Disarm("operator");
+
+        // The retired handle must remain queryable forever: followers that grabbed the source
+        // mid-flight may never observe ObjectDisposedException from the latch's lifecycle.
+        Assert.True(source.Token.IsCancellationRequested);
+        Assert.False(stop.IsArmed);
+        Assert.False(stop.TokenSource.Token.IsCancellationRequested);
+
+        // Disposal still fails closed exactly as before: post-dispose use of the ACTIVE source throws.
+        stop.Dispose();
+        Assert.Throws<ObjectDisposedException>(() => stop.TokenSource.Token);
+    }
+
+    [Fact]
+    public void EngineLatchTokenSurvivesDisarmAndRearm()
+    {
+        using var latch = new EmergencyStopLatch();
+        var firstCancelled = false;
+        using (latch.Token.Register(() => firstCancelled = true))
+        {
+            latch.Arm("operator", "drill");
+            Assert.True(firstCancelled);
+            Assert.True(latch.IsArmed);
+            Assert.Equal("drill", latch.Snapshot().Reason);
+        }
+
+        latch.Disarm("second-operator");
+
+        // Fresh source after disarm: no ObjectDisposedException, cancellation cleared.
+        Assert.False(latch.IsArmed);
+        Assert.False(latch.Token.IsCancellationRequested);
+
+        var rearmedCancelled = false;
+        using (latch.Token.Register(() => rearmedCancelled = true))
+        {
+            latch.Arm("operator", "again");
+            Assert.True(rearmedCancelled);
+        }
+
+        // Retired handles from the first cycle stay valid too.
+        Assert.True(firstCancelled);
+        latch.Disarm("third-operator");
+        Assert.True(latch.Snapshot() is { Armed: false });
     }
 
     // ---------- Deterministic risk scorer ----------
