@@ -91,7 +91,8 @@ public sealed class FeedUpdateTests : IDisposable
         Assert.Equal(ExitCodes.Ok, exit);
         var version = await db.LatestFeedVersionAsync("osv-test");
         Assert.NotNull(version);
-        Assert.True(version!.IsCurrent, "the real api.osv.dev single-query endpoint must answer the production client");
+        Assert.True(version!.IsCurrent,
+            "the real api.osv.dev single-query endpoint must answer the production client; note: " + version.Note);
     }
 
     private ActDatabase CreateDatabase()
@@ -167,18 +168,27 @@ public sealed class OsvStubServer : IDisposable
     private async Task LoopAsync(string? body, int statusCode, CancellationToken cancellation)
     {
         var payload = Encoding.UTF8.GetBytes(body ?? "{}");
-        var head = Encoding.ASCII.GetBytes(
-            "HTTP/1.1 " + statusCode + " reason\r\nContent-Type: application/json\r\nContent-Length: "
-            + payload.Length + "\r\nConnection: close\r\n\r\n");
         try
         {
             while (!cancellation.IsCancellationRequested)
             {
                 using var client = await _listener.AcceptTcpClientAsync(cancellation);
                 await using var stream = client.GetStream();
-                var buffer = new byte[4096];
-                // Drain the request head (the provider posts a JSON body) before answering.
-                _ = await stream.ReadAsync(buffer, cancellation);
+                var requestBody = await ReadRequestBodyAsync(stream, cancellation);
+
+                // Mirror the real endpoint's strictness: the query body MUST be camelCase
+                // ("package"/"version"). PascalCase members are rejected with HTTP 400, exactly
+                // like api.osv.dev rejects them - so a serialization regression can never pass
+                // these tests vacuously.
+                if (!HasCamelCaseQueryShape(requestBody))
+                {
+                    statusCode = 400;
+                    payload = Encoding.UTF8.GetBytes("{}");
+                }
+
+                var head = Encoding.ASCII.GetBytes(
+                    "HTTP/1.1 " + statusCode + " reason\r\nContent-Type: application/json\r\nContent-Length: "
+                    + payload.Length + "\r\nConnection: close\r\n\r\n");
                 await stream.WriteAsync(head, cancellation);
                 await stream.WriteAsync(payload, cancellation);
                 await stream.FlushAsync(cancellation);
@@ -189,6 +199,35 @@ public sealed class OsvStubServer : IDisposable
         catch (SocketException) { }
         catch (ObjectDisposedException) { }
         catch (IOException) { }
+    }
+
+    private static bool HasCamelCaseQueryShape(string requestBody)
+    {
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(requestBody);
+            var root = document.RootElement;
+            return root.TryGetProperty("package", out var package)
+                && package.TryGetProperty("name", out _)
+                && package.TryGetProperty("ecosystem", out _)
+                && root.TryGetProperty("version", out _)
+                && !root.TryGetProperty("Package", out _);
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>The provider posts one small single-shot request; one read carries head + body.</summary>
+    private static async Task<string> ReadRequestBodyAsync(NetworkStream stream, CancellationToken cancellation)
+    {
+        var buffer = new byte[8192];
+        var read = await stream.ReadAsync(buffer, cancellation);
+        if (read == 0) return string.Empty;
+        var text = Encoding.ASCII.GetString(buffer, 0, read);
+        var marker = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        return marker >= 0 ? text[(marker + 4)..] : string.Empty;
     }
 
     public void Dispose()

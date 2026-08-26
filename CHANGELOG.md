@@ -49,6 +49,12 @@ a version bump commits to; the product version itself lives once in
 - **OSV default endpoint matched no implemented protocol.** Configuration shipped
   `https://api.osv.dev/v1/querybatch` while the provider posts the single-query body `/v1/query`
   defines - every enabled live query would have degraded to HTTP 400 stale forever.
+- **The advisory client posted PascalCase bodies the real OSV API rejects.** `QueryBody`
+  serialized with default options produced `{"Package":...}` members; api.osv.dev answers HTTP 400
+  to unknown fields, so even on the correct path live queries failed forever - while body-agnostic
+  loopback stubs stayed green. Query bodies now serialize with Web defaults (camelCase); the stub
+  validates body shape and mirrors the real 400; the opt-in `ARTEMIS_OSV_LIVE=1` proof passes
+  against production api.osv.dev.
 - **Re-marking a prohibited port accumulated duplicate entries.** Prohibition now supersedes ANY
   prior entry for the port/protocol, not just Expected ones.
 
