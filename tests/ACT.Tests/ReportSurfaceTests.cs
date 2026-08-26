@@ -127,8 +127,11 @@ public class ReportSurfaceTests
 
         var expectedExtensions = new Dictionary<ReportFormat, string>
         {
-            [ReportFormat.Json] = "json", [ReportFormat.Csv] = "csv",
-            [ReportFormat.Markdown] = "md", [ReportFormat.Html] = "html", [ReportFormat.Sarif] = "sarif"
+            [ReportFormat.Json] = "json",
+            [ReportFormat.Csv] = "csv",
+            [ReportFormat.Markdown] = "md",
+            [ReportFormat.Html] = "html",
+            [ReportFormat.Sarif] = "sarif"
         };
         var assessmentId = Guid.NewGuid();
         foreach (var (format, extension) in expectedExtensions)
@@ -174,7 +177,8 @@ public class ReportSurfaceTests
             "technical explanation",
             new RemediationGuidance("Fix it.", ["step-one"], []),
             new FingerprintComponents(CheckId.From("CHK-TST"), "target.local", "resource", classification))
-        with { Status = status };
+        with
+        { Status = status };
 
     private static ScopeDefinition MakeScope(Guid scopeId, Guid assessmentId) => new(
         ScopeId: scopeId,

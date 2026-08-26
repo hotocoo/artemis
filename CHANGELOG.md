@@ -12,6 +12,14 @@ a version bump commits to; the product version itself lives once in
 
 ### Added
 
+- **macOS and Linux release support** - the release pipeline now produces self-contained
+  single-file executables for win-x64, linux-x64, linux-arm64, osx-arm64, and osx-x64 via the
+  cross-platform `scripts/build-release.sh` (SHA-256 checksums, release manifest, and a
+  CycloneDX SBOM per RID); CI runs the full test matrix natively on Ubuntu, macOS, and Windows,
+  and the release workflow smoke-tests each natively published binary before packaging.
+- Published-binary smoke coverage: the osx-arm64 artifact was exercised against a live loopback
+  lab assessment and the linux-arm64 artifact inside a bare Debian container, both surfacing the
+  persisted planning-exclusion ledger end to end.
 - **Persisted planning-exclusion ledger (schema v4)** - the orchestrator's decision to keep a
   check out of an execution plan is now stored BEFORE any work runs (`plan.exclusions`, audited),
   so every coverage surface can answer "why did this registered check never record an execution?"
@@ -21,8 +29,21 @@ a version bump commits to; the product version itself lives once in
 - **Benchmarks** for the planning-exclusion store at realistic scale (1,000 seeded decisions;
   filtered per-assessment listing and one typical 50-row save batch per iteration).
 
+### Fixed
+
+- The benchmark entry point ignored command-line filters and always ran every benchmark in the
+  assembly; it now routes arguments through BenchmarkSwitcher as documented.
+- Formatting violations across several test files failed the CI format guard; corrected.
+
 ### Changed
 
+- **Invariant globalization is enabled product-wide.** Every comparison and parse was already
+  explicit Ordinal/InvariantCulture; freezing the culture removes host-locale variance from
+  deterministic tooling and drops the ICU runtime dependency for self-contained Linux and macOS
+  deployments.
+- Linux deployments document OpenSSL 3 (`libssl3`) as their one native runtime dependency; the
+  DNS-pinning gate's fail-closed refusal of out-of-scope resolutions was re-verified from inside
+  a containerized network during cross-platform validation.
 - `IAssessmentRecorder` gains `RecordPlanExclusionsAsync`; the engine persists planning decisions
   before executing any work item, exactly like the check-run ledger is recorded as work executes -
   together they leave no third state in which a check's absence from coverage is unexplainable.

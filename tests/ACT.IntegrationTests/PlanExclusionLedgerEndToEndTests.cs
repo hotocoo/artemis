@@ -1,7 +1,7 @@
+using ACT.Cli;
 using ACT.Cli.Composition;
 using ACT.Contracts;
 using ACT.Core;
-using ACT.Cli;
 using ACT.Persistence;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -61,7 +61,7 @@ public sealed class PlanExclusionLedgerEndToEndTests(LabFixture lab)
 
         // ...and its plan carried deterministic exclusions (the scope denies the whole
         // Authorization category, so the fixture-driven API behavioral check - the only check
-  // declaring that category - was kept out BEFORE any work ran).
+        // declaring that category - was kept out BEFORE any work ran).
         Assert.NotEmpty(summary.Exclusions);
         var apiExclusion = Assert.Single(summary.Exclusions, e => e.CheckId == "ACT-API-BEHAVIOR-001");
         Assert.False(string.IsNullOrWhiteSpace(apiExclusion.ReasonCode));

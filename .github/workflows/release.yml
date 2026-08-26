@@ -4,52 +4,75 @@ on:
   workflow_dispatch:
     inputs:
       sign:
-        description: "Authenticode-sign the artifacts (requires configured certificate secret)"
+        description: "Authenticode-sign the Windows artifacts (requires configured certificate secret)"
         required: false
         default: "false"
 
 jobs:
-  release:
-    runs-on: windows-latest
+  test:
+    # Native verification on every shipping platform before anything is packaged.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Unit tests
+        run: dotnet test tests/ACT.Tests/ACT.Tests.csproj -c Release
+      - name: Integration tests (lab fixtures, loopback only)
+        run: dotnet test tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj -c Release
+      - name: Safety tests (fail-closed invariants)
+        run: dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj -c Release
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rids: "win-x64"
+          - os: macos-latest
+            rids: "osx-arm64 osx-x64"
+          - os: ubuntu-latest
+            rids: "linux-x64 linux-arm64"
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-
-      - name: Test everything first
+      - name: Publish + checksums + manifest + SBOM
+        shell: bash
+        run: ./scripts/build-release.sh ${{ matrix.rids }}
+      - name: Smoke-test the natively published CLI
+        shell: bash
         run: |
-          dotnet test tests/ACT.Tests/ACT.Tests.csproj -c Release
-          dotnet test tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj -c Release
-          dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj -c Release
-
-      - name: Publish win-x64 single-file (CLI)
-        run: >
-          dotnet publish src/ACT.Cli/ACT.Cli.csproj -c Release -r win-x64
-          --self-contained true -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/publish/cli
-
-      - name: Publish win-x64 single-file (Desktop console)
-        run: >
-          dotnet publish src/ACT.Desktop/ACT.Desktop.csproj -c Release -r win-x64
-          --self-contained true -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true -o artifacts/publish/desktop
-
-      - name: Checksums + manifest
-        shell: pwsh
-        run: ./scripts/New-ReleaseManifest.ps1 -ArtifactsRoot artifacts/publish -OutDir artifacts/release
-
+          set -e
+          case "${{ runner.os }}" in
+            Windows) BIN="artifacts/publish/win-x64/artemis/artemis.exe" ;;
+            macOS)   BIN="artifacts/publish/osx-arm64/artemis/artemis" ;;
+            Linux)   BIN="artifacts/publish/linux-x64/artemis/artemis" ;;
+          esac
+          chmod +x "$BIN" 2>/dev/null || true
+          "$BIN" version
+          "$BIN" doctor || true   # environment report must not crash either
       - name: Authenticode sign (when enabled)
-        if: ${{ inputs.sign == 'true' }}
+        if: ${{ inputs.sign == 'true' && runner.os == 'Windows' }}
         env:
           ARTEMIS_SIGN_CERT: ${{ secrets.ARTEMIS_SIGN_CERT }}
           ARTEMIS_SIGN_CERT_PASSWORD: ${{ secrets.ARTEMIS_SIGN_CERT_PASSWORD }}
           ARTEMIS_TIMESTAMP_URL: ${{ vars.ARTEMIS_TIMESTAMP_URL }}
         shell: pwsh
-        run: ./scripts/Sign-Release.ps1 -ArtifactDir artifacts/release
-
+        run: ./scripts/Sign-Release.ps1 -ArtifactDir artifacts/release/win-x64
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: artemis-release
+          name: artemis-release-${{ matrix.os }}
           path: artifacts/release/

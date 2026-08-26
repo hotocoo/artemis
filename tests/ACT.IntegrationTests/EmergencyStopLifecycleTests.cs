@@ -1,6 +1,6 @@
 
-using ACT.Contracts;
 using ACT.Cli;
+using ACT.Contracts;
 using ACT.Persistence;
 using ACT.Policy;
 using Microsoft.Data.Sqlite;
