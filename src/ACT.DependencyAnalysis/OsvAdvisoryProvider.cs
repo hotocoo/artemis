@@ -54,7 +54,7 @@ public sealed class OsvAdvisoryProvider : ISecurityAdvisoryProvider, IDisposable
         CancellationToken cancellationToken)
     {
         var body = JsonSerializer.SerializeToUtf8Bytes(new QueryBody(
-            new PackageRef(packageName, ecosystem), version));
+            new PackageRef(packageName, ecosystem), version), s_bodySerializerOptions);
 
         try
         {
@@ -261,6 +261,14 @@ public sealed class OsvAdvisoryProvider : ISecurityAdvisoryProvider, IDisposable
         var canonical = $"{id}|{rangeExpression}|{fixedVersion ?? string.Empty}";
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)).AsSpan(0, 8)).ToLowerInvariant();
     }
+
+    /// <summary>
+    /// The query body MUST be camelCase ("package"/"version"): the OSV single-query endpoint
+    /// rejects unknown PascalCase members with HTTP 400. Web defaults provide exactly that,
+    /// plus case-insensitive deserialization for responses we may parse elsewhere.
+    /// </summary>
+    private static readonly JsonSerializerOptions s_bodySerializerOptions =
+        new(JsonSerializerDefaults.Web);
 
     /// <inheritdoc/>
     public void Dispose() => _client.Dispose();
