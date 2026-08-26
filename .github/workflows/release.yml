@@ -51,6 +51,17 @@ jobs:
       - name: Publish + checksums + manifest + SBOM
         shell: bash
         run: ./scripts/build-release.sh ${{ matrix.rids }}
+      - name: Verify SHA256SUMS inside the release directory
+        shell: bash
+        run: |
+          set -e
+          case "${{ runner.os }}" in
+            Windows) DIR="artifacts/release/win-x64" ;;
+            macOS)   DIR="artifacts/release/osx-arm64" ;;
+            Linux)   DIR="artifacts/release/linux-x64" ;;
+          esac
+          cd "$DIR"
+          shasum -a 256 -c SHA256SUMS || sha256sum -c SHA256SUMS
       - name: Smoke-test the natively published CLI
         shell: bash
         run: |

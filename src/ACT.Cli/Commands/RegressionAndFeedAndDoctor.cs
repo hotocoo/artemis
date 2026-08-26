@@ -406,9 +406,8 @@ public static class DoctorCommand
 
     private static string ResolveDatabasePath(IServiceProvider services)
     {
-        var configuration = services.GetRequiredService<IConfiguration>();
-        var raw = configuration["Act:Storage:DatabasePath"] ?? "artemis.db";
-        return Path.IsPathRooted(raw) ? raw : Path.Combine(AppContext.BaseDirectory, raw);
+        // One database-location rule shared with composition, config, and the console host.
+        return Composition.ArtemisComposition.ResolveDatabasePath(services.GetRequiredService<IConfiguration>());
     }
 
     private static bool ProbeWrite(string directory)

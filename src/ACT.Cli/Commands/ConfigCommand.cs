@@ -112,9 +112,8 @@ public static class ScopeCommand
 
     internal static string ResolveDatabasePath(IServiceProvider services)
     {
-        var configuration = services.GetRequiredService<IConfiguration>();
-        var raw = configuration["Act:Storage:DatabasePath"] ?? "act.db";
-        return Path.IsPathRooted(raw) ? raw : Path.GetFullPath(raw);
+        // One database-location rule shared with composition, doctor, and the console host.
+        return Composition.ArtemisComposition.ResolveDatabasePath(services.GetRequiredService<IConfiguration>());
     }
 }
 

@@ -10,6 +10,8 @@ a version bump commits to; the product version itself lives once in
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-26
+
 ### Added
 
 - **macOS and Linux release support** - the release pipeline now produces self-contained
@@ -31,6 +33,24 @@ a version bump commits to; the product version itself lives once in
 
 ### Fixed
 
+- **`artemis assessment start --scope FILE` works as documented, as a single command.** The launch
+  path now registers the assessment row and its typed scope copy itself when no prior
+  `assessment create` happened; previously such a run failed closed at its first lifecycle
+  transition with a persistence error, and only the undocumented create-then-start sequence worked.
+  Explicit pre-registration is unchanged and never duplicated.
+- **Release directories are self-contained.** `build-release.sh` now stages each RID's published
+  binaries into `artifacts/release/<rid>` before writing its metadata, so `release-manifest.json`,
+  `SHA256SUMS`, and `sbom.json` sit next to the exact bytes they describe, `sha256sum -c` verifies
+  in place, and the uploaded release artifact carries the executables instead of metadata alone.
+  The release workflow verifies the checksums on a native runner before packaging.
+- **One database-location rule for every surface.** The engine, `config show`, `scope list`,
+  doctor, reports, and the console host now all resolve the database through the same shared
+  helper: explicit configuration wins, otherwise the file lives beside the installed executable.
+  Read surfaces previously anchored a relative path to the current directory while the engine
+  anchored it to the install directory, so they could silently report on two different databases.
+- The operator console publishes under its documented name: the self-contained single-file
+  executable is now `artemis-console` (plus `artemis-console.exe` on Windows) instead of the raw
+  assembly name `ACT.Desktop`, matching the operator manual and the release manifests.
 - The benchmark entry point ignored command-line filters and always ran every benchmark in the
   assembly; it now routes arguments through BenchmarkSwitcher as documented.
 - Formatting violations across several test files failed the CI format guard; corrected.
