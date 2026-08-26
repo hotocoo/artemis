@@ -115,6 +115,20 @@ internal static class Pages
     private static string Esc(object? value) =>
         System.Text.Encodings.Web.HtmlEncoder.Default.Encode(value?.ToString() ?? "-");
 
+    /// <summary>Renders a value as a toned status pill so every surface reads states one way.</summary>
+    private static string Pill(string tone, string text) =>
+        "<span class=\"pill pill-" + tone + "\">" + Esc(text) + "</span>";
+
+    /// <summary>The one honest tone per lifecycle state, shared by every console listing.</summary>
+    private static string StatusPill(string status) => status switch
+    {
+        "Confirmed" or "Remediated" or "Completed" or "Held" or "OK" => Pill("ok", status),
+        "Regressed" or "Failed_FailedClosed" or "TimedOut" or "DEGRADED" => Pill("bad", status),
+        "AcceptedRisk" or "CompletedWithWarnings" => Pill("warn", status),
+        "New" or "Reopened" => Pill("info", status),
+        _ => Pill("muted", status)
+    };
+
     public static async Task<IResult> Dashboard(IServiceProvider sp)
     {
         var db = sp.GetRequiredService<ActDatabase>();
@@ -140,15 +154,15 @@ internal static class Pages
                     + " (reason: " + Esc(flag.Reason) + ")");
             }
 
-            body.Append("<p><strong style=\"color:#b71c1c\">EMERGENCY STOP ARMED</strong> - "
-                + string.Join("; ", sources) + "</p>");
-            body.Append("<form class=\"inline\" method=\"post\" action=\"/emergency-disarm\">");
-            body.Append("<button type=\"submit\">Disarm emergency stop</button></form>");
+            body.Append("<div class=\"alert alert-danger\"><strong>EMERGENCY STOP ARMED</strong> - "
+                + string.Join("; ", sources)
+                + "<form class=\"stack\" method=\"post\" action=\"/emergency-disarm\">"
+                + "<button type=\"submit\">Disarm emergency stop</button></form></div>");
         }
         else
         {
             body.Append("<form class=\"inline\" method=\"post\" action=\"/emergency-stop\">");
-            body.Append("<button class=\"danger\" type=\"submit\">Activate emergency stop</button></form>");
+            body.Append("<button class=\"danger\" type=\"submit\" title=\"Cancels in-flight work and denies new checks until explicitly disarmed\">Activate emergency stop</button></form>");
         }
 
         body.Append("<div class=\"cards\">");
@@ -166,7 +180,7 @@ internal static class Pages
             body.Append($"<div class=\"card\"><b>{Esc(value)}</b>{Esc(label)}</div>");
         }
         body.Append("</div>");
-        body.Append($"<p style=\"margin-top:1rem;color:#667\">Computed {Esc(snapshot.ComputedUtc.ToString("u"))} from persisted rows.</p>");
+        body.Append($"<p class=\"small muted\">Computed {Esc(snapshot.ComputedUtc.ToString("u"))} from persisted rows.</p>");
         return Results.Content(ArtemisConsoleLayout.Render("Dashboard", "Dashboard", body.ToString()), "text/html");
     }
 
@@ -216,8 +230,8 @@ internal static class Pages
             rows.Append("<td>").Append(Esc(asset.DisplayName)).Append("</td>");
             rows.Append("<td><code>").Append(Esc(asset.CanonicalTarget)).Append("</code></td>");
             rows.Append(asset.WithinScope
-                ? "<td>in scope</td>"
-                : "<td style=\"color:#b71c1c\"><strong>OUT OF SCOPE</strong></td>");
+                ? "<td><span class=\"pill pill-ok\">in scope</span></td>"
+                : "<td><span class=\"pill pill-bad\">OUT OF SCOPE</span></td>");
             rows.Append("<td>").Append(Esc(string.Join(", ", asset.ObservedIps))).Append("</td>");
             rows.Append("<td>").Append(ports).Append("</td>");
             rows.Append("<td>").Append(asset.DiscoveredAtUtc.ToLocalTime().ToString("u")).Append("</td></tr>");
@@ -257,7 +271,8 @@ internal static class Pages
             rows.Append("<tr>");
             rows.Append($"<td><span class=\"sev-{f.TechnicalSeverity}\">{f.TechnicalSeverity}</span></td>");
             rows.Append($"<td><a href=\"/findings/{f.FindingId}\">{Esc(f.Title)}</a></td>");
-            rows.Append($"<td>{Esc(f.Category)}</td><td>{Esc(f.Status)}</td>");
+            rows.Append("<td>").Append(Esc(f.Category)).Append("</td><td>")
+                .Append(StatusPill(f.Status.ToString())).Append("</td>");
             rows.Append($"<td>{f.ConfidenceScore:0.0}</td><td>{f.PriorityScore:0}</td>");
             rows.Append($"<td>{Esc(f.TargetDisplay)}</td><td>{Esc(f.LastSeenUtc.ToString("u"))}</td></tr>");
         }
@@ -269,8 +284,8 @@ internal static class Pages
 
     public static Task<IResult> FindingDetail(IServiceProvider sp, Guid id, string? triaged) =>
         RenderFindingDetail(sp, id,
-            triaged is null ? null : "<p><b>Triage decision recorded.</b> The status below and the "
-            + "hash-chained audit log reflect it; the finding row shows who decided and why.</p>");
+            triaged is null ? null : "<div class=\"alert alert-ok\"><strong>Triage decision recorded.</strong> The status below and the "
+            + "hash-chained audit log reflect it; the finding row shows who decided and why.</div>");
 
     private static async Task<IResult> RenderFindingDetail(IServiceProvider sp, Guid id, string? banner)
     {
@@ -363,8 +378,8 @@ internal static class Pages
         }
         catch (ActException ex)
         {
-            var failure = "<p style=\"color:#b71c1c\"><strong>Triage refused:</strong> "
-                + Esc(ex.SafeMessage) + "</p>";
+            var failure = "<div class=\"alert alert-danger\"><strong>Triage refused:</strong> "
+                + Esc(ex.SafeMessage) + "</div>";
             return await RenderFindingDetail(sp, id, failure);
         }
     }
@@ -393,14 +408,14 @@ internal static class Pages
         b.Append("<h1>Security Baselines</h1>");
         if (created is not null)
         {
-            b.Append("<p><b>Baseline stored.</b> It snapshots that assessment's observed services and ")
+            b.Append("<div class=\"alert alert-ok\"><strong>Baseline stored.</strong> It snapshots that assessment's observed services and ")
                 .Append("only the finding fingerprints an operator had dispositioned through triage. ")
-                .Append("Compare any later assessment of the same scope against it.</p>");
+                .Append("Compare any later assessment of the same scope against it.</div>");
         }
 
         if (error is not null)
         {
-            b.Append("<p style=\"color:#b71c1c\"><strong>Refused:</strong> ").Append(Esc(error)).Append("</p>");
+            b.Append("<div class=\"alert alert-danger\"><strong>Refused:</strong> ").Append(Esc(error)).Append("</div>");
         }
 
         b.Append("<p>A comparison lists service drift plus finding-level drift (new, regressed, resolved-or-unobserved) ")
@@ -473,7 +488,7 @@ internal static class Pages
         catch (ActException ex)
         {
             body = "<h1>Baseline comparison - " + Esc(record.Name) + "</h1>"
-                + "<p style=\"color:#b71c1c\"><strong>Comparison refused:</strong> " + Esc(ex.SafeMessage) + "</p>";
+                + "<div class=\"alert alert-danger\"><strong>Comparison refused:</strong> " + Esc(ex.SafeMessage) + "</div>";
         }
 
         return Results.Content(ArtemisConsoleLayout.Render("Baselines", "Baselines", body), "text/html");
@@ -609,7 +624,7 @@ internal static class Pages
 
         var b = new StringBuilder();
         b.Append("<h1>Coverage</h1>");
-        b.Append("<p>The check execution ledger per assessment: every recorded run with its true ")
+        b.Append("<p class=\"sub\">The check execution ledger per assessment: every recorded run with its true ")
             .Append("outcome. Verification counts derive from these rows only - coverage is never ")
             .Append("estimated, and checks that never executed stay visible instead of silent.</p>");
 
@@ -618,7 +633,7 @@ internal static class Pages
             var assessments = await db.ListAssessmentsAsync(50);
             if (assessments.Count == 0)
             {
-                b.Append("<p>No assessments stored yet. Start one with <code>artemis assessment start --scope my-scope.json</code>.</p>");
+                b.Append("<div class=\"empty\">No assessments stored yet. Start one with <code>artemis assessment start --scope my-scope.json</code>.</div>");
             }
             else
             {
@@ -668,34 +683,27 @@ internal static class Pages
             var rows = new StringBuilder();
             foreach (var run in snapshot.Runs)
             {
-                var color = run.Status switch
-                {
-                    CheckExecutionStatus.Completed => "#2e7d32",
-                    CheckExecutionStatus.CompletedWithWarnings => "#b26a00",
-                    CheckExecutionStatus.Failed_FailedClosed or CheckExecutionStatus.TimedOut => "#c62828",
-                    _ => "#5b6470"
-                };
                 rows.Append("<tr><td><code>").Append(Esc(run.CheckId)).Append("</code></td>")
-                    .Append("<td style=\"color:").Append(color).Append("\"><strong>").Append(Esc(run.Status)).Append("</strong></td>")
+                    .Append("<td>").Append(StatusPill(run.Status.ToString())).Append("</td>")
                     .Append("<td>").Append(Esc(run.StartedUtc.ToLocalTime().ToString("u"))).Append("</td>")
-                    .Append("<td>").Append(Esc(run.RequestCount)).Append("</td>")
-                    .Append("<td>").Append(Esc(run.TargetsExamined)).Append("</td>")
-                    .Append("<td>").Append(Esc(run.FailureSummarySafe ?? "-")).Append("</td></tr>");
+                    .Append("<td class=\"num\">").Append(Esc(run.RequestCount)).Append("</td>")
+                    .Append("<td class=\"num\">").Append(Esc(run.TargetsExamined)).Append("</td>")
+                    .Append("<td class=\"muted small\">").Append(Esc(run.FailureSummarySafe ?? "-")).Append("</td></tr>");
             }
 
-            b.Append("<table><tr><th>Check</th><th>Outcome</th><th>Started</th><th>Requests</th><th>Targets</th><th>Note</th></tr>")
+            b.Append("<table><thead><tr><th>Check</th><th>Outcome</th><th>Started</th><th>Requests</th><th>Targets</th><th>Note</th></tr></thead>")
                 .Append(rows).Append("</table>");
         }
         else
         {
-            b.Append("<p>No check executions recorded for this assessment - every count below stays at zero ")
-                .Append("because the ledger proves nothing ran.</p>");
+            b.Append("<div class=\"empty\">No check executions recorded for this assessment. Every count stays at zero ")
+                .Append("because the ledger proves nothing ran - coverage of nothing is zero, never \"fully covered\".</div>");
         }
 
         if (snapshot.NeverExecuted.Count > 0)
         {
             b.Append("<h2>Registered checks with no recorded execution</h2>");
-            b.Append("<p style=\"color:#667\">The reason is not persisted; the ledger proves only that ")
+            b.Append("<p class=\"sub small\">The reason is not persisted; the ledger proves only that ")
                 .Append("nothing was recorded for these ids in this assessment.</p>");
             var rows = new StringBuilder();
             foreach (var meta in snapshot.NeverExecuted)
@@ -710,9 +718,9 @@ internal static class Pages
         }
 
         var c = snapshot.Coverage;
-        b.Append("<h2>Verification counts</h2>");
-        b.Append("<p>").Append(Esc(CoverageOperations.VerificationCountsLine(c)))
-            .Append(". The same numbers back every generated report.</p>");
+        b.Append("<div class=\"alert\"><strong>Verification counts:</strong> ")
+            .Append(Esc(CoverageOperations.VerificationCountsLine(c)))
+            .Append(". The same numbers back every generated report.</div>");
 
         return Results.Content(ArtemisConsoleLayout.Render("Coverage", "Coverage", b.ToString()), "text/html");
     }
@@ -763,7 +771,10 @@ internal static class Pages
                 rows.Append("<td><a href=\"/regressions/").Append(test.RegressionTestId).Append("\">")
                     .Append(Esc(test.Name)).Append("</a></td>");
                 rows.Append($"<td><span class=\"sev-{test.SuggestedSeverity}\">{test.SuggestedSeverity}</span></td>");
-                rows.Append("<td>").Append(test.Enabled ? "enabled" : "<b>disabled</b>").Append(due ? " <b>DUE</b>" : "").Append("</td>");
+                rows.Append("<td>")
+                    .Append(test.Enabled ? Pill("ok", "enabled") : Pill("muted", "disabled"))
+                    .Append(due ? " " + Pill("warn", "due") : "")
+                    .Append("</td>");
                 rows.Append("<td>").Append(Esc(RegressionOperations.FormatCadence(test.Cadence))).Append("</td>");
                 rows.Append("<td>").Append(lastVerdict).Append("</td>");
                 rows.Append("<td>").Append(Esc(names.GetValueOrDefault(test.OriginAssessmentId, ShortId(test.OriginAssessmentId)))).Append("</td>");
@@ -827,7 +838,7 @@ internal static class Pages
             }
             catch (ActException)
             {
-                b.Append("<p style=\"color:#b71c1c\">Stored recipe unreadable; treat this test as manual-only.</p>");
+                b.Append("<div class=\"alert alert-danger\">Stored recipe unreadable; treat this test as manual-only.</div>");
             }
         }
         else
@@ -848,8 +859,8 @@ internal static class Pages
             {
                 rows.Append("<tr><td>").Append(run.RanAtUtc.ToString("u")).Append("</td><td>")
                     .Append(run.Result == VerificationState.Confirmed
-                        ? "<b style=\"color:#c62828\">REGRESSED</b>"
-                        : "<span class=\"sev-Low\">held</span>")
+                        ? Pill("bad", "REGRESSED")
+                        : Pill("ok", "held"))
                     .Append("</td><td>").Append(Esc(run.Detail)).Append("</td></tr>");
             }
 
@@ -894,39 +905,39 @@ internal static class Pages
         var rows = new StringBuilder();
         foreach (var e in events)
         {
-            rows.Append($"<tr><td>{e.Sequence}</td><td>{e.TimestampUtc:u}</td><td>{Esc(e.Actor)}</td>");
-            rows.Append($"<td>{Esc(e.Action)}</td><td>{Esc(e.ObjectType)}:{Esc(e.ObjectId)}</td>");
-            rows.Append($"<td>{Esc(e.Result)}</td><td style=\"font-size:.75rem\">{e.EventHash[..16]}...</td></tr>");
+            rows.Append($"<tr><td class=\"num\">{e.Sequence}</td><td>{e.TimestampUtc:u}</td><td>{Esc(e.Actor)}</td>");
+            rows.Append($"<td><code>{Esc(e.Action)}</code></td><td>{Esc(e.ObjectType)}<span class=\"muted\">:</span>{Esc(e.ObjectId)}</td>");
+            rows.Append($"<td>{Esc(e.Result)}</td><td class=\"mono\">{e.EventHash[..16]}</td></tr>");
         }
 
         string banner;
         if (verification.Verified)
         {
-            banner = $"<p>Hash chain verified over all {verification.EventCount} stored events.</p>";
+            banner = $"<div class=\"alert alert-ok\">Hash chain verified over all {verification.EventCount} stored events.</div>";
         }
         else
         {
             // Name where the history stops being trustworthy instead of only saying that it does.
-            banner = "<p style=\"color:#b71c1c\"><strong>HASH CHAIN VERIFICATION FAILED</strong> - the audit log may have been tampered with.<br>"
-                + $"First broken entry: sequence {verification.FirstBrokenSequence} ({Esc(verification.Reason ?? "unverified")}).</p>";
+            banner = "<div class=\"alert alert-danger\"><strong>HASH CHAIN VERIFICATION FAILED</strong> - the audit log may have been tampered with.<br>"
+                + $"First broken entry: sequence {verification.FirstBrokenSequence} ({Esc(verification.Reason ?? "unverified")}).</div>";
         }
 
         // Quick filters over the event families every operator eventually hunts for.
         var chips = new StringBuilder();
-        chips.Append("<p style=\"font-size:.85rem\">Filter: ");
+        chips.Append("<div class=\"chips\" role=\"group\" aria-label=\"Filter by event family\">");
         foreach (var candidate in new[] { null, "assessment.", "finding.", "baseline.", "regression.", "schedule.", "evidence." })
         {
             var label = candidate ?? "all";
             var selected = candidate == actionPrefix;
             chips.Append(selected
-                ? "<b>" + Esc(label) + "</b> "
-                : "<a href=\"/audit" + (candidate is null ? "" : "?action=" + Uri.EscapeDataString(candidate)) + "\">" + Esc(label) + "</a> ");
+                ? "<span class=\"chip active\" aria-current=\"true\">" + Esc(label) + "</span> "
+                : "<a class=\"chip\" href=\"/audit" + (candidate is null ? "" : "?action=" + Uri.EscapeDataString(candidate)) + "\">" + Esc(label) + "</a> ");
         }
 
-        chips.Append("</p>");
-        var head = "<h1>Audit Log</h1>" + chips
-            + $"<p style=\"color:#555;font-size:.85rem\">showing {events.Count} of {total} stored event(s)"
-            + (actionPrefix is null ? "" : ", action prefix &#39;" + Esc(actionPrefix) + "&#39;") + ", newest first.</p>";
+        chips.Append("</div>");
+        var head = "<h1>Audit Log</h1><p class=\"sub small\">showing " + events.Count + " of " + total
+            + " stored event(s)"
+            + (actionPrefix is null ? "" : ", action prefix &#39;" + Esc(actionPrefix) + "&#39;") + ", newest first.</p>" + chips;
         var table = "<table><tr><th>#</th><th>Time (UTC)</th><th>Actor</th><th>Action</th><th>Object</th><th>Result</th><th>Hash</th></tr>" + rows + "</table>";
         return Results.Content(
             ArtemisConsoleLayout.Render("Audit Log", "Audit Log", head + banner + table), "text/html");
@@ -995,7 +1006,7 @@ internal static class Pages
                     + (lastSweep?.SweptUtc.ToString("u") ?? "never") + "."));
 
         var rows = string.Join("", checks.Select(c =>
-            "<tr><td>" + Esc(c.Name) + "</td><td>" + (c.Ok ? "OK" : "DEGRADED") + "</td><td>" + Esc(c.Detail) + "</td></tr>"));
+            "<tr><td>" + Esc(c.Name) + "</td><td>" + StatusPill(c.Ok ? "OK" : "DEGRADED") + "</td><td>" + Esc(c.Detail) + "</td></tr>"));
         var body = "<h1>System Health</h1>" +
                    "<table><tr><th>Component</th><th>Status</th><th>Detail</th></tr>" + rows + "</table>";
         return Results.Content(ArtemisConsoleLayout.Render("System Health", "System Health", body), "text/html");
