@@ -302,4 +302,48 @@ public class BaselineTests
         await db.CreateAssessmentAsync(assessment, MakeScope(assessment.ScopeId, assessment.AssessmentId));
         return assessment;
     }
+
+    [Fact]
+    public async Task Operations_ProhibitSupersedesExpectedAndAuditsIdempotently()
+    {
+        var fixture = await PersistFixture.CreateAsync();
+        await using (fixture)
+        {
+            var db = fixture.Database;
+            var assessment = await CreatePairedAsync(db);
+
+            // No baseline yet: prohibition fails closed like comparison does.
+            await Assert.ThrowsAsync<ActException>(() => BaselineOperations.MarkProhibitedAsync(
+                db, assessment.AssessmentId, null, 5900, ProtocolKind.Tcp, "tester", CorrelationId.New()));
+
+            var asset = MakeAsset(assessment);
+            await db.AddAssetAsync(asset);
+            await db.AddServiceAsync(new ServiceObservation(
+                Guid.NewGuid(), asset.AssetId, 8443, ProtocolKind.Https,
+                "banner", true, DateTimeOffset.UtcNow, CheckId.From("CHK-NET")));
+            var baseline = await BaselineOperations.CreateAsync(db, assessment, "hardened", "tester", CorrelationId.New());
+            Assert.Single(baseline.ExpectedServices, e => e.Status == BaselineServiceStatus.Expected);
+
+            var hardened = await BaselineOperations.MarkProhibitedAsync(
+                db, assessment.AssessmentId, baseline.BaselineId, 8443, ProtocolKind.Https, "tester", CorrelationId.New());
+            var entry = Assert.Single(hardened.ExpectedServices);
+            Assert.Equal(new ServiceBaselineEntry(8443, ProtocolKind.Https, BaselineServiceStatus.Prohibited), entry);
+
+            // Idempotent re-marking changes nothing and stores no duplicate entry.
+            var again = await BaselineOperations.MarkProhibitedAsync(
+                db, assessment.AssessmentId, hardened.BaselineId, 8443, ProtocolKind.Https, "tester", CorrelationId.New());
+            Assert.Equal(hardened.ExpectedServices, again.ExpectedServices);
+
+            // Comparison now reports the port answering as unexpected exposure.
+            var comparison = await BaselineOperations.CompareAsync(
+                db, assessment.AssessmentId, null, "tester", CorrelationId.New());
+            Assert.Contains(comparison.Observations, o => o.Kind == DriftAnalyzer.UnexpectedServiceExposed);
+
+            var events = await db.ReadRecentAuditAsync(10);
+            var prohibited = events.Where(e => e.Action == "baseline.prohibited").ToList();
+            Assert.NotEmpty(prohibited);
+            Assert.All(prohibited, e => Assert.Contains("marked prohibited", e.Result));
+            Assert.True(await db.VerifyChainAsync());
+        }
+    }
 }

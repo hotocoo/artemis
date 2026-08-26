@@ -99,7 +99,9 @@ public sealed class FeedOptions
         {
             Name = "osv",
             Kind = AdvisoryFeedKind.Osv,
-            EndpointOrPath = "https://api.osv.dev/v1/querybatch",
+            // The single-package query endpoint: OsvAdvisoryProvider posts exactly the
+            // { package, version } body /v1/query defines (NOT the batch protocol).
+            EndpointOrPath = "https://api.osv.dev/v1/query",
             Enabled = false
         }
     ];

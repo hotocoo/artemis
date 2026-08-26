@@ -10,6 +10,48 @@ a version bump commits to; the product version itself lives once in
 
 ## [Unreleased]
 
+### Added
+
+- **The service-drift baseline scenario is live-proven end to end.** A real `ServiceDiscoveryCheck`
+  observes real loopback services, a baseline is created and hardened through the new
+  `artemis baseline prohibit` verb (`BaselineOperations.MarkProhibitedAsync`: supersedes any
+  Expected entry for the port, idempotent, audited as `baseline.prohibited`), the environment then
+  drifts - expected service dark, prohibited service alive - and comparison reports exactly the
+  documented classes (expected-service-absent Medium, unexpected-service-exposed High, finding-new)
+  with the CLI gate exiting 5. Until now `unexpected-service-exposed` existed as a kind code no
+  production path could ever produce.
+- **In-flight emergency-stop cancellation is live-proven at deterministic speed.** The persisted-flag
+  watcher interval is operator-tunable via `Act:EmergencyStopWatch:PollInterval` (production default
+  unchanged at two seconds), and an integration test drives the REAL launch path: assessment already
+  executing, flag armed from "another process", watcher cancels mid-run, run recorded Stopped,
+  no check completing after the stop, next launch denied pre-flight.
+- **`artemis feed update` performs a real OSV liveness query** for enabled Osv sources through the
+  production advisory client (one pinned single-package probe): success records the feed current;
+  transport/HTTP/parse failures keep it stale with the specific reason attached. An opt-in test
+  (`ARTEMIS_OSV_LIVE=1`) proves the same path against api.osv.dev.
+
+### Fixed
+
+- **Emergency-stop latch race that failed ubuntu CI.** Superseded token sources are now RETIRED
+  instead of disposed eagerly: any handle ever handed out stays queryable until latch disposal, so a
+  follower racing a disarm can read `Token`, register callbacks, or cancel without ever observing
+  `ObjectDisposedException`. Post-dispose contract unchanged; concurrency hammer extended to 256
+  iterations over token reads and registrations.
+- **`EmergencyStopLatch.Disarm` never did what its comment claimed.** It disposed the only token
+  source instead of swapping in a fresh one (leaving dead statements behind), exposed auto-properties
+  `Reason`/`Actor` that were never assigned (snapshots always empty), and had no disposal path. All
+  repaired with the same retirement semantics.
+- **An emergency stop during a running assessment no longer strands it in Running.** The engine's
+  cancellation catch required the cancellation NOT to come through the external token - but the
+  emergency watcher cancels exactly that token, so the Stopped transition and `assessment.stopped`
+  audit were skipped on precisely the path they exist for. Every cancellation route now records
+  Stopped before rethrowing.
+- **OSV default endpoint matched no implemented protocol.** Configuration shipped
+  `https://api.osv.dev/v1/querybatch` while the provider posts the single-query body `/v1/query`
+  defines - every enabled live query would have degraded to HTTP 400 stale forever.
+- **Re-marking a prohibited port accumulated duplicate entries.** Prohibition now supersedes ANY
+  prior entry for the port/protocol, not just Expected ones.
+
 ## [1.1.1] - 2026-08-26
 
 ### Added

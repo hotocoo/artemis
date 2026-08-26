@@ -183,6 +183,14 @@ public static class ArtemisHostFactory
     {
         services.AddSingleton<IConfiguration>(configuration);
         services.Configure<ActOptions>(configuration.GetSection(ActOptions.SectionName));
+        // The persisted-flag watcher interval is operator-tunable; production default stays two
+        // seconds unless this section exists (tests bind a small value to prove in-flight stops).
+        services.AddSingleton(_ =>
+        {
+            var watch = new EmergencyStopWatchOptions();
+            configuration.GetSection("Act:EmergencyStopWatch").Bind(watch);
+            return watch;
+        });
         services.AddSingleton(globals);
         services.AddArtemisCore();
 

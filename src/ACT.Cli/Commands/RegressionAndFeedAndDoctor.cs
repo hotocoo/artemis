@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using ACT.Contracts;
 using ACT.Core;
+using ACT.DependencyAnalysis;
 using ACT.Network;
 using ACT.Persistence;
 using ACT.Policy;
@@ -305,6 +306,24 @@ public static class RegressionCommands
 /// <summary>artemis feed update — refreshes configured advisory feeds and records freshness.</summary>
 public static class FeedCommands
 {
+    /// <summary>
+    /// The pinned probe package for OSV liveness: a historical NuGet version whose advisory set
+    /// is stable. The round trip proves endpoint reachability and response parseability end to
+    /// end through the production advisory client; the result COUNT is reported, never assumed.
+    /// </summary>
+    private const string OsvProbeEcosystem = "NuGet";
+    private const string OsvProbePackage = "Newtonsoft.Json";
+    private const string OsvProbeVersion = "9.0.0";
+
+    private sealed record FeedUpdateOutcome(
+        string Name,
+        AdvisoryFeedKind Kind,
+        string EndpointOrPath,
+        bool Enabled,
+        bool Updated,
+        string MetadataHash,
+        string Note);
+
     public static async Task<int> Run(IServiceProvider services, string[] args)
     {
         if (args.Length == 0 || args[0] != "update")
@@ -316,23 +335,24 @@ public static class FeedCommands
         var configuration = services.GetRequiredService<IConfiguration>();
         var feedsSection = configuration.GetSection("Act:Feeds:Sources").GetChildren().ToList();
 
-        var results = new List<object>();
+        var results = new List<FeedUpdateOutcome>();
         foreach (var source in feedsSection)
         {
             var name = source.GetValue<string>("Name") ?? "";
             var enabled = source.GetValue<bool>("Enabled");
-            var kind = source.GetValue<string>("Kind") ?? "";
+            var kindText = source.GetValue<string>("Kind") ?? "";
             var endpointOrPath = source.GetValue<string>("EndpointOrPath") ?? "";
 
             if (!enabled)
             {
-                results.Add(new { feed = name, updated = false, note = "disabled in configuration" });
+                results.Add(new FeedUpdateOutcome(name, AdvisoryFeedKind.OfflineFile, endpointOrPath,
+                    Enabled: false, Updated: false, "", "disabled in configuration"));
                 continue;
             }
 
             try
             {
-                if (kind.Equals("OfflineFile", StringComparison.OrdinalIgnoreCase))
+                if (kindText.Equals("OfflineFile", StringComparison.OrdinalIgnoreCase))
                 {
                     var bytes = File.ReadAllBytes(endpointOrPath);
                     var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
@@ -344,17 +364,52 @@ public static class FeedCommands
                             $"Advisory snapshot '{name}' failed its integrity check.",
                             $"SHA-256 mismatch: expected {expected}, got {hash}.");
                     }
-                    results.Add(new { feed = name, updated = true, sha256 = hash, retrievedUtc = DateTimeOffset.UtcNow });
+                    results.Add(new FeedUpdateOutcome(name, AdvisoryFeedKind.OfflineFile, endpointOrPath,
+                        Enabled: true, Updated: true, hash, ""));
+                }
+                else if (kindText.Equals("Osv", StringComparison.OrdinalIgnoreCase))
+                {
+                    // A LIVE OSV query through the production client. Success advances the feed's
+                    // recorded freshness honestly; any transport or parse failure degrades to a
+                    // stale marker carrying the specific reason - absence stays visible, silent.
+                    if (!Uri.TryCreate(endpointOrPath, UriKind.Absolute, out var osvEndpoint)
+                        || osvEndpoint.Scheme is not ("http" or "https"))
+                    {
+                        throw ActException.FailClosed(ErrorCategory.ExternalFeed,
+                            $"The OSV feed '{name}' has an invalid endpoint.",
+                            $"EndpointOrPath '{endpointOrPath}' is not an absolute HTTP(S) URI.");
+                    }
+
+                    var staleAfterDays = source.GetValue<int?>("StaleAfterDays")
+                        ?? configuration.GetValue<int?>("Act:Feeds:StaleAfterDays") ?? 7;
+                    using var provider = new OsvAdvisoryProvider(
+                        osvEndpoint, staleAfterDays > 0 ? staleAfterDays : 7);
+                    var lookup = await provider.QueryAsync(
+                        OsvProbeEcosystem, OsvProbePackage, OsvProbeVersion, CancellationToken.None)
+                        .ConfigureAwait(false);
+                    var canonical = OsvProbeEcosystem + "|" + OsvProbePackage + "|" + OsvProbeVersion + "|"
+                        + lookup.Advisories.Count + "|"
+                        + string.Join(",", lookup.Advisories.Select(static a => a.MetadataHash));
+                    var digest = Convert.ToHexString(
+                        System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(canonical)))
+                        .ToLowerInvariant();
+                    results.Add(new FeedUpdateOutcome(name, AdvisoryFeedKind.Osv, endpointOrPath,
+                        Enabled: true, Updated: lookup.Freshness.IsCurrent, digest,
+                        lookup.Freshness.IsCurrent
+                            ? "live query succeeded (" + lookup.Advisories.Count + " advisories for the probe package)"
+                            : lookup.Freshness.Note));
                 }
                 else
                 {
-                    // Remote feeds are optional integrations; their absence must be visible, not silent.
-                    results.Add(new { feed = name, updated = false, note = "remote provider update requires network; marked stale until refreshed" });
+                    // Unknown remote kinds are optional integrations; their absence must stay visible.
+                    results.Add(new FeedUpdateOutcome(name, AdvisoryFeedKind.OfflineFile, endpointOrPath,
+                        Enabled: true, Updated: false, "",
+                        "remote provider kind '" + kindText + "' has no live updater; marked stale until refreshed"));
                 }
             }
             catch (ActException ex) when (ex.Category == ErrorCategory.ExternalFeed)
             {
-                throw; // integrity failures fail closed loudly.
+                throw; // integrity/configuration failures fail closed loudly.
             }
         }
 
@@ -362,19 +417,21 @@ public static class FeedCommands
         await db.InitializeAsync();
         foreach (var entry in results)
         {
-            var json = JsonSerializer.Serialize(entry);
-            var doc = JsonDocument.Parse(json);
-            var name = doc.RootElement.GetProperty("feed").GetString() ?? "";
-            var updated = doc.RootElement.TryGetProperty("updated", out var upd) && upd.GetBoolean();
-            var hashValue = doc.RootElement.TryGetProperty("sha256", out var h) ? h.GetString() ?? "" : "";
-            var noteValue = doc.RootElement.TryGetProperty("note", out var n) ? n.GetString() ?? "" : "";
-            await db.UpsertFeedAsync(new FeedRecord(name, AdvisoryFeedKind.OfflineFile, "", updated, DateTimeOffset.UtcNow));
-            await db.RecordFeedVersionAsync(name, DateTimeOffset.UtcNow, hashValue, updated, noteValue);
+            await db.UpsertFeedAsync(new FeedRecord(
+                entry.Name, entry.Kind, entry.EndpointOrPath, entry.Enabled, DateTimeOffset.UtcNow));
+            await db.RecordFeedVersionAsync(entry.Name, DateTimeOffset.UtcNow, entry.MetadataHash, entry.Updated, entry.Note);
         }
 
-        return await OutputWriter.WriteAsync(services,
-            string.Join(Environment.NewLine, results.Select(r => JsonSerializer.Serialize(r))),
-            JsonSerializer.Serialize(results, JsonOpts.Indented));
+        var text = string.Join(Environment.NewLine, results.Select(r =>
+            r.Name + ": " + (r.Updated ? "updated" : "NOT current") + (r.Note.Length > 0 ? " - " + r.Note : "")));
+        return await OutputWriter.WriteAsync(services, text, JsonSerializer.Serialize(results.Select(r => new
+        {
+            feed = r.Name,
+            kind = r.Kind.ToString(),
+            updated = r.Updated,
+            sha256 = r.MetadataHash,
+            note = r.Note
+        }), JsonOpts.Indented));
     }
 }
 
