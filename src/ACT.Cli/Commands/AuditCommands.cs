@@ -224,8 +224,14 @@ public static class AuditCommands
         }
 
         var header = "exported " + all.Count + " audit event(s), oldest first";
-        var write = await OutputWriter.WriteAsync(services, header + Environment.NewLine + payload, payload);
-        if (!string.IsNullOrWhiteSpace(services.GetRequiredService<GlobalOptions>().OutputPath))
+
+        // The archive IS the artifact: every write path (file via --output, stdout redirect,
+        // --json capture) must carry the pure JSON/CSV payload with no human preamble anywhere
+        // near it - an external auditor's json.load or CSV reader sees exactly what was hashed.
+        // The friendly summary goes to the console only.
+        var write = await OutputWriter.WriteAsync(services, payload, payload);
+        if (!string.IsNullOrWhiteSpace(services.GetRequiredService<GlobalOptions>().OutputPath)
+            && !services.GetRequiredService<GlobalOptions>().Quiet)
         {
             Console.WriteLine(header);
         }

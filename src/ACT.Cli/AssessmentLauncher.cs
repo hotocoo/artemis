@@ -9,6 +9,7 @@ using ACT.Persistence;
 using ACT.Policy;
 using ACT.Risk;
 using ACT.Scope;
+using ACT.Tls.Checks;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace ACT.Cli;
@@ -140,18 +141,66 @@ public static class AssessmentLauncher
             new(context, asset, Service: null, BaseUrl: baseUrl)
         };
 
-        // Check selection mirrors the asset kind: URL-addressable targets receive the web/TLS/API
-        // battery through the safe engine; local repository targets receive the network-free
-        // source and dependency analyses. A scope that supports neither has no executable work.
+        if (baseUrl is { } tlsOrigin && tlsOrigin.Scheme is "https")
+        {
+            // A second, handshake-only context keyed to ProtocolKind.Tls: the ACT.Tls battery
+            // requires a Tls-protocol service while every web/API check requires http(s), so
+            // each family executes exactly once against the origin it can address.
+            contexts.Add(new SecurityCheckContext(context, asset,
+                Service: new ServiceObservation(Guid.NewGuid(), asset.AssetId,
+                    baseUrl.IsDefaultPort ? 443 : baseUrl.Port,
+                    ProtocolKind.Tls, Banner: null, TlsNegotiated: true,
+                    DateTimeOffset.UtcNow, SourceCheck: CertificateTrustCheck.CheckIdentifier),
+                BaseUrl: null));
+        }
+
+        // Composition decides what can be CONSTRUCTED for this launch - never silently. The
+        // orchestrator owns every allow/deny verdict over the composed checks, but a check this
+        // launcher never composes would otherwise be invisible to the persisted planning-exclusion
+        // ledger: coverage could only shrug "no recorded execution, no stored reason". So every
+        // family left out here becomes an explicit ExclusionDecision handed to the engine with
+        // the plan and persisted before any work runs, keeping stored facts as the only reason
+        // store coverage reads.
         var checks = new List<ISecurityCheck>();
+        var compositionExclusions = new List<ExclusionDecision>();
+
         if (baseUrl is not null)
         {
-            checks.AddRange(CheckRegistry.CreateTargetedChecks(baseUrl));
+            // One probe bundle per launch; the handshake path reuses the same scope validator
+            // and DNS gate as the safe engine, so TLS inspection inherits full authorization.
+            var tls = new TlsServices(validator, validator,
+                new TlsHandshakeProbeAdapter(new TlsHandshakeProbe(validator, validator)));
+            var targeted = CheckRegistry.CreateTargetedCheckSet(baseUrl, tls);
+            checks.AddRange(targeted.Checks);
             checks.Add(new ApiBehavioralCheck());
+            if (!targeted.OpenApiDocumentPublished)
+            {
+                compositionExclusions.Add(new ExclusionDecision(
+                    ApiSurfaceAnalysisCheck.CheckIdValue, "OPENAPI_DOCUMENT_ABSENT",
+                    "No OpenAPI document answered at the conventional location; surface analysis was not composed."));
+            }
         }
-        else if (scope.TargetType is TargetTypeKind.LocalSourceRepository or TargetTypeKind.TestEnvironment)
+        else
+        {
+            const string noOriginDetail =
+                "No HTTP origin was resolved for this scope; the check cannot address anything.";
+            foreach (var id in CheckRegistry.WebCheckIds.Append(ApiBehavioralCheck.CheckIdValue))
+            {
+                compositionExclusions.Add(new ExclusionDecision(id, "NO_HTTP_ORIGIN", noOriginDetail));
+            }
+        }
+
+        if (scope.TargetType is TargetTypeKind.LocalSourceRepository or TargetTypeKind.TestEnvironment)
         {
             checks.AddRange(CheckRegistry.CreateRepositoryChecks(evidenceFactory));
+        }
+        else
+        {
+            const string kindDetail = "Check does not support asset kind Url.";
+            foreach (var id in CheckRegistry.RepositoryCheckIds)
+            {
+                compositionExclusions.Add(new ExclusionDecision(id, "TARGET_TYPE_MISMATCH", kindDetail));
+            }
         }
 
         var correlation = CorrelationId.New();
@@ -166,7 +215,8 @@ public static class AssessmentLauncher
             var summary = await engine.RunAsync(new AssessmentRunRequest(
                 scope.AssessmentId, correlation, scope, budget,
                 checks, contexts, PreexistingFindings: null,
-                Scorer: services.GetService<IFindingScorer>() ?? new DeterministicFindingScorer()),
+                Scorer: services.GetService<IFindingScorer>() ?? new DeterministicFindingScorer(),
+                CompositionExclusions: compositionExclusions),
                 linkedCts.Token);
 
             // Completed runs with operator-supplied fixtures leave durable regression tests behind

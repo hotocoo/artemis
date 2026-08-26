@@ -13,7 +13,7 @@ Start from `samples/scope.example.json`. Required fields:
 - `targetType` - Localhost, PrivateIp, PrivateSubnet, Hostname, Domain, Url, LocalSourceRepository, LocalContainer, TestEnvironment.
 - `allowlistedTargets` - exact hostnames, CIDRs, URLs, or paths. Single-label names are rejected unless the type is TestEnvironment.
 - `excludedTargets` - always win over the allowlist.
-- `permittedPorts` / `permittedProtocols` - nothing outside these is ever contacted.
+- `permittedProtocols` / `permittedPorts` - nothing outside these is ever contacted. Assessing an **https** origin needs `"Tls"` among the permitted protocols: the handshake-inspection battery classifies its probes as Tls candidates, exactly like non-default ports classify as Tcp.
 - Rate, concurrency, runtime, and request caps - conservative defaults provided; configuration cannot raise engine hard caps.
 - `allowedCategories`/`prohibitedCategories` - category policy; contradictions are rejected.
 
@@ -30,6 +30,8 @@ Provide fixtures (`samples/authorization-fixtures.example.json`) with test princ
 ## 3. Running assessments
 
 `artemis assessment start --scope my-scope.json --json`
+
+URL-addressable scopes resolve the HTTP origin from the first allowlisted `http(s)://…` target; any other scope names it explicitly with `--base-url http://host:port`. A scope with no resolvable origin is refused before anything runs - and every registered check that could not be composed for the launch is recorded in `artemis coverage show` with its reason, never silently dropped.
 
 During a run: every request passes rate limiting, scope verdicts, pinned DNS connections, timeouts, response-size caps, and decompression limits. The emergency stop cancels scheduling immediately and is audited.
 

@@ -3,6 +3,7 @@ using ACT.Cli.Composition;
 using ACT.Contracts;
 using ACT.Core;
 using ACT.Persistence;
+using ACT.Tls.Checks;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Xunit;
@@ -91,12 +92,80 @@ public sealed class PlanExclusionLedgerEndToEndTests(LabFixture lab)
         Assert.Contains(excludedIds, id => id == "ACT-API-BEHAVIOR-001");
         Assert.DoesNotContain(snapshot.UnexplainedNeverExecuted, m => excludedIds.Contains(m.Id.Value));
 
-        // Registered catalog checks with no execution and NO stored reason (the repository-only
-        // analyses, never offered on a URL target) remain visible as an honest gap - the surface
-        // refuses to invent excuses for them.
-        Assert.Equal(
-            snapshot.NeverExecuted.Where(m => !excludedIds.Contains(m.Id.Value)).Select(m => m.Id.Value).OrderBy(x => x),
-            snapshot.UnexplainedNeverExecuted.Select(m => m.Id.Value).OrderBy(x => x));
+        // The launcher's composition decisions are stored facts too: on this URL-addressable
+        // scope the repository-only analyses were never composed, and each omission carries its
+        // own persisted TARGET_TYPE_MISMATCH decision - worded exactly like the orchestrator's.
+        foreach (var repoCheckId in new[] { "ACT-SRC-SCAN-001", "ACT-DEP-AUDIT-001" })
+        {
+            var row = Assert.Single(stored, s => s.CheckId == repoCheckId);
+            Assert.Equal("TARGET_TYPE_MISMATCH", row.ReasonCode);
+            Assert.Equal("Check does not support asset kind Url.", row.Detail);
+        }
+
+        // The TLS inspection battery is composed for every URL origin but requires a Tls-
+        // protocol service; against this plain-http origin each member's exclusion is a stored
+        // PROTOCOL_MISMATCH fact instead of an invisible omission.
+        foreach (var tlsCheckId in new[] { "ACT-TLS-CERT-001", "ACT-TLS-PROTOCOL-002", "ACT-TLS-CIPHER-003" })
+        {
+            var tlsRow = Assert.Single(stored, s => s.CheckId == tlsCheckId);
+            Assert.Equal("PROTOCOL_MISMATCH", tlsRow.ReasonCode);
+        }
+
+        // A production-path launch leaves NO registered check without either a recorded
+        // execution or a stored reason: the unexplained column is empty by construction.
+        Assert.Empty(snapshot.UnexplainedNeverExecuted);
+    }
+
+    [Fact]
+    public async Task HttpsOrigin_ExecutesTlsInspectionBatteryAndReportsCertificateFindings()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "act-plan-e2e", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Act:Storage:DatabasePath"] = Path.Combine(directory, "act.db"),
+            ["Act:Storage:WalEnabled"] = "false"
+        }).Build();
+        var services = new ServiceCollection();
+        ArtemisHostFactory.ConfigureServices(services, configuration, new GlobalOptions());
+        services.AddArtemisPersistence();
+        services.AddArtemisPolicy();
+        services.AddArtemisRisk();
+        await using var provider = services.BuildServiceProvider();
+
+        var db = provider.GetRequiredService<ActDatabase>();
+        await db.InitializeAsync();
+
+        var allowed = Enum.GetValues<CheckCategory>().Where(c => c != CheckCategory.Authorization).ToArray();
+        var scope = new ScopeDefinition(
+            ScopeId: Guid.NewGuid(), AssessmentId: Guid.NewGuid(),
+            OperatorIdentity: "tls-e2e-operator", Organization: "artemis-e2e",
+            TargetType: TargetTypeKind.Localhost,
+            AllowlistedTargets: ["localhost", "127.0.0.1"], ExcludedTargets: [],
+            PermittedProtocols: [ProtocolKind.Tcp, ProtocolKind.Http, ProtocolKind.Https, ProtocolKind.Tls],
+            PermittedPorts: [PortRange.Single(lab.BaseUrl.Port), PortRange.Single(lab.HttpsBaseUrl.Port)],
+            RequestsPerSecond: 50, ConcurrencyLimit: 4, MaxRuntime: TimeSpan.FromMinutes(5),
+            MaxRequests: 500, AllowedCategories: allowed, ProhibitedCategories: [CheckCategory.Authorization],
+            EmergencyStopEnabled: true, EvidenceRetentionPeriod: TimeSpan.FromDays(7),
+            DataRedactionPolicy: RedactionPolicy.Standard,
+            AuthorizationStatement: "HTTPS E2E authorization statement for the local test lab.");
+
+        var summary = await AssessmentLauncher.LaunchAsync(
+            provider, scope, lab.HttpsBaseUrl, AuthorizationFixtureSet.None, CancellationToken.None);
+
+        Assert.Equal(AssessmentRunState.Completed, summary.FinalState);
+
+        // The handshake battery ran through the pinned-DNS safe path and observed the lab's
+        // self-signed certificate chain.
+        Assert.Contains(summary.CheckResults, r => r.CheckId == CertificateTrustCheck.CheckIdentifier
+            && r.Status is CheckExecutionStatus.Completed or CheckExecutionStatus.CompletedWithWarnings);
+        // Whichever trust state the lab's chain classifies as (self-signed, incomplete chain,
+        // ...), the certificate inspection must contribute an actual finding - silence about a
+        // served identity is never acceptable for this battery.
+        Assert.Contains(summary.Findings, f => f.CheckId == CertificateTrustCheck.CheckIdentifier);
+
+        Assert.True(summary.ChecksExecuted > 0);
     }
 
     /// <summary>

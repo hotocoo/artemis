@@ -10,6 +10,62 @@ a version bump commits to; the product version itself lives once in
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-26
+
+### Added
+
+- **TLS handshake-inspection battery is wired into every URL assessment.** `ACT.Tls` shipped
+  three checks - certificate trust/expiry (`ACT-TLS-CERT-001`), accepted protocol versions
+  (`ACT-TLS-PROTOCOL-002`), and negotiated cipher suites (`ACT-TLS-CIPHER-003`) - but no
+  composition path ever constructed them: they were unreachable dead weight behind the lab
+  fixtures built to exercise them. URL launches now compose the trio through a dedicated
+  handshake-only context on the same scope-validator/DNS-gate authorization path as the safe
+  HTTP engine; http origins persist each member's `PROTOCOL_MISMATCH`, and assessing an https
+  origin requires `"Tls"` among permitted protocols (sample scope and operator manual updated).
+  Live lab proof: expired certificates surface as High findings, self-signed chains as Medium.
+
+### Fixed
+
+- **CLI diagnostics never touch stdout.** Engine log events were written to stdout, corrupting
+  the `--json` output contract for any run whose checks logged while executing. The console
+  logger now writes to stderr unconditionally; stdout carries command payloads only.
+- **Natural TLS negotiation observes instead of aborting.** The probe's validation callback
+  captured the chain but then returned false, so untrusted endpoints produced "handshake failed"
+  warnings and the inspection checks could never see the certificate state they exist to report.
+  After scope+DNS authorization, observation completes the handshake accept-only and records the
+  chain errors alongside it.
+- **Exclusion rows can no longer contradict executions.** A check composed against one context
+  but rejected on another carried both an execution ledger row and persisted per-context
+  exclusions; per-context rejections now persist only when no context admitted the check.
+- **`artemis regression run` works against custom-port targets again.** The replay's derived
+  scope permitted only http/https while the DNS-pinning gate classifies every non-default port
+  as a Tcp candidate, and its only allowlist entry was a URL prefix - which compiles to no
+  hostname or IP-range matcher at all - so every replay failed closed with "not covered by any
+  allowlist entry". The replay scope now allowlists the host itself (CIDR form for address
+  literals) beside the path-scoped URL prefix and permits Tcp like every assessment scope does;
+  replays execute through the same pinned-DNS safe engine as assessments.
+- **`artemis audit export` archives are byte-clean machine artifacts.** The human summary line
+  ("exported N audit event(s)...") was prepended to the archived text in default mode, so files
+  written via `--output`, plain stdout redirects, and pipes all failed an external auditor's
+  `json.load` / CSV reader before parsing started. Every write path now carries exactly the
+  hashed payload; the summary stays console-only.
+- **Every planning decision is now a stored fact, including the launcher's.** Composition in
+  `AssessmentLauncher` decided which check families were ever constructed (web/API battery for
+  URL origins, network-free repository analyses otherwise) without recording anything, so
+  coverage could only report those checks as "no execution, no stored reason" on brand-new
+  databases - mislabeled as pre-ledger assessments. The launcher now hands every omission to the
+  engine as an explicit composition exclusion (`NO_HTTP_ORIGIN`, `TARGET_TYPE_MISMATCH`,
+  `OPENAPI_DOCUMENT_ABSENT`), persisted with the plan's own exclusions before any work runs.
+  A production-path launch leaves the unexplained column of `artemis coverage show` empty by
+  construction; only genuinely pre-ledger assessments still show gaps, and the surface now says
+  exactly that.
+
+### Changed
+
+- `AssessmentRunRequest` gains optional `CompositionExclusions`; hosts that compose checks
+  themselves can record their decisions through the same ledger. Repository scopes launched with
+  an explicit `--base-url` now also run their source and dependency analyses instead of nothing.
+
 ## [1.1.0] - 2026-08-26
 
 ### Added

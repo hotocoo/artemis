@@ -56,7 +56,26 @@ public sealed class AssessmentEngine(
                 .ToList();
 
             var plan = orchestrator.BuildPlan(request.Scope, orderedChecks, request.Contexts, accountant);
-            foreach (var exclusion in plan.Exclusions)
+
+            // Composition exclusions (host-side decisions about checks never constructed) join the
+            // plan's own exclusions into ONE deterministic persisted record, so coverage reads a
+            // single reason store and no host-level omission can become an unexplained gap.
+            List<ExclusionDecision> planningExclusions;
+            if (request.CompositionExclusions is { Count: > 0 })
+            {
+                var merged = new List<ExclusionDecision>(plan.Exclusions.Count + request.CompositionExclusions.Count);
+                merged.AddRange(plan.Exclusions);
+                merged.AddRange(request.CompositionExclusions);
+                planningExclusions = merged
+                    .OrderBy(e => e.CheckId, StringComparer.Ordinal)
+                    .ThenBy(e => e.ReasonCode, StringComparer.Ordinal)
+                    .ToList();
+            }
+            else
+            {
+                planningExclusions = plan.Exclusions as List<ExclusionDecision> ?? [.. plan.Exclusions];
+            }
+            foreach (var exclusion in planningExclusions)
             {
                 logger.LogDebug("Check {Check} excluded: {Reason} - {Message}",
                     exclusion.CheckId, exclusion.ReasonCode, exclusion.SafeMessage);
@@ -65,12 +84,12 @@ public sealed class AssessmentEngine(
             // The planning ledger is persisted BEFORE any work item executes, exactly like the
             // check-run ledger is persisted AS work executes: together they leave no third state
             // in which a check's absence from coverage would be unexplainable.
-            if (plan.Exclusions.Count > 0)
+            if (planningExclusions.Count > 0)
             {
-                await recorder.RecordPlanExclusionsAsync(request.AssessmentId, plan.Exclusions, token);
+                await recorder.RecordPlanExclusionsAsync(request.AssessmentId, planningExclusions, token);
                 await auditSink.AppendAsync(new AuditDraft("engine", "plan.exclusions",
                     "assessment", request.AssessmentId.ToString(),
-                    plan.Exclusions.Count + " checks excluded", request.Correlation), token);
+                    planningExclusions.Count + " checks excluded", request.Correlation), token);
             }
 
             var results = new List<SecurityCheckResult>();
@@ -146,7 +165,7 @@ public sealed class AssessmentEngine(
                 results.Count(r => r.Status is not (CheckExecutionStatus.Completed or CheckExecutionStatus.CompletedWithWarnings)),
                 accountant.RequestsReserved,
                 stopwatch.Elapsed,
-                plan.Exclusions);
+                planningExclusions);
 
             await recorder.SetAssessmentStateAsync(request.AssessmentId, finalState, token);
             await auditSink.AppendAsync(new AuditDraft("engine", "assessment.completed",
@@ -206,7 +225,14 @@ public sealed record AssessmentRunRequest(
     IReadOnlyList<ISecurityCheck> Checks,
     IReadOnlyList<SecurityCheckContext> Contexts,
     IReadOnlyList<Finding>? PreexistingFindings,
-    IFindingScorer? Scorer);
+    IFindingScorer? Scorer,
+
+    /// <summary>
+    /// Decisions a host made BEFORE planning about registered checks it never composed into
+    /// <see cref="Checks"/> (no HTTP origin, asset-kind mismatch at construction). The engine
+    /// persists them with the plan's own exclusions so coverage reads stored facts only.
+    /// </summary>
+    IReadOnlyList<ExclusionDecision>? CompositionExclusions = null);
 
 /// <summary>Assigns a deterministic priority to findings; implemented by ACT.Risk.</summary>
 public interface IFindingScorer

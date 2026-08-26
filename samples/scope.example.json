@@ -6,7 +6,7 @@
   "targetType": "Localhost",
   "allowlistedTargets": ["localhost"],
   "excludedTargets": [],
-  "permittedProtocols": ["Tcp", "Http", "Https"],
+  "permittedProtocols": ["Tcp", "Http", "Https", "Tls"],
   "permittedPorts": ["8080", "47390"],
   "requestsPerSecond": 5,
   "concurrencyLimit": 2,

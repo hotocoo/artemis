@@ -18,7 +18,7 @@ internal static class TlsCheckRuntime
 
     /// <summary>True for asset kinds TLS checks are declared to support.</summary>
     internal static bool IsSupportedAsset(AssetKind kind) =>
-        kind is AssetKind.Host or AssetKind.Container or AssetKind.TestEnvironment;
+        kind is AssetKind.Host or AssetKind.Container or AssetKind.TestEnvironment or AssetKind.Url;
 
     /// <summary>Builds an honest not-applicable result carrying a safe note.</summary>
     internal static SecurityCheckResult Skip(SecurityCheckMetadata metadata, DateTimeOffset started, string safeNote) =>

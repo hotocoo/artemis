@@ -25,7 +25,7 @@ public sealed class CertificateTrustCheck : ISecurityCheck
         RequiredPermissions: PermissionRequirement.OutboundNetworkToLocalTargets,
         RequiredProtocols: new HashSet<ProtocolKind>([ProtocolKind.Tls]),
         SupportedTargetTypes: new HashSet<TargetTypeKind>(
-            [TargetTypeKind.Hostname, TargetTypeKind.TestEnvironment, TargetTypeKind.LocalContainer]),
+            [TargetTypeKind.Hostname, TargetTypeKind.TestEnvironment, TargetTypeKind.LocalContainer, TargetTypeKind.Url]),
         NetworkBehavior: new NetworkBehaviorProfile(1, TlsCheckRuntime.MaxHandshakesPerTarget, OpensConnections: true, SendsAuthenticationHeaders: false, MutatesTargetState: false),
         EvidenceTypesProduced: [EvidenceKind.CertificateMetadata, EvidenceKind.TlsMetadata],
         SupportsRemediation: false,
@@ -45,6 +45,9 @@ public sealed class CertificateTrustCheck : ISecurityCheck
 
     /// <inheritdoc />
     public SecurityCheckMetadata Metadata => s_metadata;
+
+    /// <summary>Metadata without constructing probe dependencies; used by the check catalog.</summary>
+    public static SecurityCheckMetadata Describe() => s_metadata;
 
     /// <inheritdoc />
     public async Task<SecurityCheckResult> ExecuteAsync(SecurityCheckContext context, CancellationToken cancellationToken)

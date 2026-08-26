@@ -16,3 +16,5 @@ node_modules/
 publish/
 *.pfx
 *.snk
+.DS_Store
+.DS_Store

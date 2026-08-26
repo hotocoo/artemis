@@ -102,7 +102,7 @@ public static class CoverageCommands
             text.AppendLine();
             text.AppendLine(snapshot.PlanExclusions.Count > 0
                 ? "registered checks with NO recorded execution and NO persisted planning reason:"
-                : "registered checks with NO recorded execution (no persisted planning reason - pre-ledger assessment):");
+                : "registered checks with NO recorded execution (no persisted planning reason - assessment predates the exclusion ledger):");
             foreach (var meta in snapshot.UnexplainedNeverExecuted)
             {
                 text.AppendLine("  " + meta.Id.Value + " (" + meta.Category + ", " + meta.SafetyLevel + ")");
