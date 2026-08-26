@@ -12,5 +12,6 @@
     <ProjectReference Include="../../src/ACT.Reporting/ACT.Reporting.csproj" />
     <ProjectReference Include="../../src/ACT.SourceAnalysis/ACT.SourceAnalysis.csproj" />
     <ProjectReference Include="../../src/ACT.Network/ACT.Network.csproj" />
+    <ProjectReference Include="../../src/ACT.Persistence/ACT.Persistence.csproj" />
   </ItemGroup>
 </Project>

@@ -130,6 +130,12 @@ public sealed class DatabaseRecorder(ActDatabase database, ILogger<DatabaseRecor
     public Task RecordCheckRunAsync(SecurityCheckResult result, Guid assessmentId, CancellationToken cancellationToken) =>
         database.RecordCheckRunAsync(result, assessmentId, cancellationToken);
 
+    public Task RecordPlanExclusionsAsync(Guid assessmentId, IReadOnlyList<ExclusionDecision> exclusions, CancellationToken cancellationToken) =>
+        database.SavePlanExclusionsAsync(
+            [.. exclusions.Select(e => new PlanExclusionRecord(
+                Guid.NewGuid(), assessmentId, e.CheckId, e.ReasonCode, e.SafeMessage, DateTimeOffset.UtcNow))],
+            cancellationToken);
+
     public Task SetAssessmentStateAsync(Guid assessmentId, AssessmentRunState state, CancellationToken cancellationToken) =>
         database.UpdateAssessmentStateAsync(assessmentId, state, cancellationToken);
 }

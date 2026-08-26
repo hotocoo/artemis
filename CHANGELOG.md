@@ -8,6 +8,25 @@ The typed contracts in `src/ACT.Contracts` are the public API surface whose stab
 a version bump commits to; the product version itself lives once in
 `Directory.Build.props` and flows to the CLI, reports, and this file from there.
 
+## [Unreleased]
+
+### Added
+
+- **Persisted planning-exclusion ledger (schema v4)** - the orchestrator's decision to keep a
+  check out of an execution plan is now stored BEFORE any work runs (`plan.exclusions`, audited),
+  so every coverage surface can answer "why did this registered check never record an execution?"
+  from stored facts: `artemis coverage show` renders each persisted reason with occurrence counts,
+  the console Coverage page shows the same decisions, and checks that still have no execution and
+  no stored reason remain visible as an explicit gap instead of a mystery.
+- **Benchmarks** for the planning-exclusion store at realistic scale (1,000 seeded decisions;
+  filtered per-assessment listing and one typical 50-row save batch per iteration).
+
+### Changed
+
+- `IAssessmentRecorder` gains `RecordPlanExclusionsAsync`; the engine persists planning decisions
+  before executing any work item, exactly like the check-run ledger is recorded as work executes -
+  together they leave no third state in which a check's absence from coverage is unexplainable.
+
 ## [1.0.0] - 2026-08-26
 
 First stable release of the autonomous, local-first defensive security assessment

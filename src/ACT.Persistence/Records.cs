@@ -47,6 +47,21 @@ public sealed record CheckRunRecord(
     long RequestCount,
     int TargetsExamined);
 
+/// <summary>
+/// One recorded planning decision: a check the orchestrator kept OUT of an assessment's execution
+/// plan, with the deterministic reason it did not run. This ledger is what lets every coverage
+/// surface answer "why does this registered check have no recorded execution?" from stored facts.
+/// Assessments recorded before this ledger existed have no rows here; surfaces must report that
+/// honestly as "reason not persisted", never as a fabricated excuse.
+/// </summary>
+public sealed record PlanExclusionRecord(
+    Guid ExclusionId,
+    Guid AssessmentId,
+    string CheckId,
+    string ReasonCode,
+    string Detail,
+    DateTimeOffset ExcludedUtc);
+
 /// <summary>A configured advisory-feed source as persisted locally.</summary>
 public sealed record FeedRecord(
     string Name,

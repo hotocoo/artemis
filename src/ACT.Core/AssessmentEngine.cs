@@ -62,6 +62,17 @@ public sealed class AssessmentEngine(
                     exclusion.CheckId, exclusion.ReasonCode, exclusion.SafeMessage);
             }
 
+            // The planning ledger is persisted BEFORE any work item executes, exactly like the
+            // check-run ledger is persisted AS work executes: together they leave no third state
+            // in which a check's absence from coverage would be unexplainable.
+            if (plan.Exclusions.Count > 0)
+            {
+                await recorder.RecordPlanExclusionsAsync(request.AssessmentId, plan.Exclusions, token);
+                await auditSink.AppendAsync(new AuditDraft("engine", "plan.exclusions",
+                    "assessment", request.AssessmentId.ToString(),
+                    plan.Exclusions.Count + " checks excluded", request.Correlation), token);
+            }
+
             var results = new List<SecurityCheckResult>();
             var deduplicator = new FindingDeduplicator(request.PreexistingFindings);
             var scorer = request.Scorer;

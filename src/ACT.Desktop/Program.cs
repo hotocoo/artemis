@@ -700,13 +700,31 @@ internal static class Pages
                 .Append("because the ledger proves nothing ran - coverage of nothing is zero, never \"fully covered\".</div>");
         }
 
-        if (snapshot.NeverExecuted.Count > 0)
+        if (snapshot.PlanExclusions.Count > 0)
         {
-            b.Append("<h2>Registered checks with no recorded execution</h2>");
-            b.Append("<p class=\"sub small\">The reason is not persisted; the ledger proves only that ")
-                .Append("nothing was recorded for these ids in this assessment.</p>");
+            b.Append("<h2>Excluded at planning time</h2>");
+            b.Append("<p class=\"sub small\">Persisted orchestrator decisions recorded before any work ran: ")
+                .Append("these are the stored reasons checks never reached the execution plan.</p>");
             var rows = new StringBuilder();
-            foreach (var meta in snapshot.NeverExecuted)
+            foreach (var e in CoverageOperations.SummarizeExclusions(snapshot.PlanExclusions))
+            {
+                rows.Append("<tr><td><code>").Append(Esc(e.CheckId)).Append("</code></td><td>")
+                    .Append(StatusPill(e.ReasonCode)).Append("</td><td class=\"num\">").Append(Esc(e.Occurrences))
+                    .Append("</td><td class=\"muted small\">").Append(Esc(e.Detail)).Append("</td></tr>");
+            }
+
+            b.Append("<table><thead><tr><th>Check</th><th>Reason</th><th>Times</th><th>Detail</th></tr></thead>")
+                .Append(rows).Append("</table>");
+        }
+
+        if (snapshot.UnexplainedNeverExecuted.Count > 0)
+        {
+            b.Append("<h2>Registered checks with no recorded execution and no persisted reason</h2>");
+            b.Append("<p class=\"sub small\">The planning ledger holds nothing for these ids (assessments ")
+                .Append("recorded before it existed have no rows); the gap stays visible instead of ")
+                .Append("being papered over with a guess.</p>");
+            var rows = new StringBuilder();
+            foreach (var meta in snapshot.UnexplainedNeverExecuted)
             {
                 rows.Append("<tr><td><code>").Append(Esc(meta.Id.Value)).Append("</code></td><td>")
                     .Append(Esc(meta.Name)).Append("</td><td>").Append(Esc(meta.Category))

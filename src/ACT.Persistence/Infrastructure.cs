@@ -365,6 +365,7 @@ internal static class Migrations
         (SchemaV1.Version, SchemaV1.Name, SchemaV1.Checksum(), SchemaV1.Statements),
         (SchemaV2.Version, SchemaV2.Name, SchemaV2.Checksum(), SchemaV2.Statements),
         (SchemaV3.Version, SchemaV3.Name, SchemaV3.Checksum(), SchemaV3.Statements),
+        (SchemaV4.Version, SchemaV4.Name, SchemaV4.Checksum(), SchemaV4.Statements),
     ];
 }
 
@@ -385,6 +386,36 @@ internal static class SchemaV3
 
     /// <summary>SHA-256 hex checksum of the complete v3 script.</summary>
     internal static string Checksum() => MigrationScript.Checksum(string.Join(";\n", Statements));
+}
+
+/// <summary>
+/// The v4 schema: the persisted planning-exclusion ledger. Frozen once shipped - edits break
+/// deployed databases via checksum mismatch, exactly like v1. A fresh table keeps every earlier
+/// database valid without a rewrite; assessments recorded before v4 simply have no planning rows,
+/// and coverage surfaces must say the reason was never persisted instead of inventing one.
+/// </summary>
+internal static class SchemaV4
+{
+    internal const int Version = 4;
+    internal const string Name = "plan-exclusions";
+
+    internal static readonly string[] Statements =
+    [
+        """
+        CREATE TABLE IF NOT EXISTS plan_exclusions (
+            exclusion_id  TEXT NOT NULL PRIMARY KEY,
+            assessment_id TEXT NOT NULL REFERENCES assessments(assessment_id),
+            check_id      TEXT NOT NULL,
+            reason_code   TEXT NOT NULL,
+            detail        TEXT NOT NULL,
+            excluded_utc  TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_plan_exclusions_assessment ON plan_exclusions(assessment_id)",
+    ];
+
+    /// <summary>SHA-256 hex checksum of the complete v4 script.</summary>
+    internal static string Checksum() => MigrationScript.Checksum(string.Join(";", Statements));
 }
 
 /// <summary>
