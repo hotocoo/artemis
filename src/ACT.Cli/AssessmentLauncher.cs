@@ -269,12 +269,18 @@ public static class AssessmentLauncher
         }
     }
 
-    /// <summary>Polls the persisted emergency flag and cancels the linked token when armed.</summary>
+    /// <summary>
+    /// Polls the persisted emergency flag and cancels the linked token when armed. The interval
+    /// comes from <see cref="EmergencyStopWatchOptions"/> (default two seconds), so hosts that
+    /// need faster cross-process stop detection can tighten it without code changes.
+    /// </summary>
     private static async Task WatchEmergencyFlag(IServiceProvider services, CancellationTokenSource linked,
         CancellationToken external)
     {
         var db = services.GetRequiredService<ActDatabase>();
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        var watch = services.GetService<EmergencyStopWatchOptions>() ?? new EmergencyStopWatchOptions();
+        watch.Validate();
+        using var timer = new PeriodicTimer(watch.PollInterval);
         try
         {
             while (await timer.WaitForNextTickAsync(external))

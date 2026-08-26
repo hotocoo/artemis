@@ -25,6 +25,7 @@ public static class BaselineCommands
             "create" => await CreateAsync(services, db, args[1..]),
             "list" => await ListAsync(services, db, args[1..]),
             "compare" => await CompareAsync(services, db, args[1..]),
+            "prohibit" => await ProhibitAsync(services, db, args[1..]),
             _ => Usage()
         };
 
@@ -33,11 +34,84 @@ public static class BaselineCommands
             Console.Error.WriteLine("usage: artemis baseline create --assessment ASSESSMENT_ID [--name NAME] [--actor OPERATOR]");
             Console.Error.WriteLine("       artemis baseline list (--assessment ASSESSMENT_ID | --scope SCOPE_ID)");
             Console.Error.WriteLine("       artemis baseline compare --assessment ASSESSMENT_ID [--baseline BASELINE_ID]");
+            Console.Error.WriteLine("       artemis baseline prohibit --assessment ASSESSMENT_ID --port PORT [--protocol tcp|http|https|tls] [--baseline BASELINE_ID] [--actor OPERATOR]");
             Console.Error.WriteLine();
             Console.Error.WriteLine("Creation snapshots observed services and accepts only fingerprints an operator has");
-            Console.Error.WriteLine("already dispositioned through triage (AcceptedRisk / FalsePositive). Comparison exits 5");
+            Console.Error.WriteLine("already dispositioned through triage (AcceptedRisk / FalsePositive). Prohibition records");
+            Console.Error.WriteLine("an operator decision that a port must never answer again. Comparison exits 5");
             Console.Error.WriteLine("(gate failed) when any drift is present so pipelines can fail on it.");
             return ExitCodes.UsageError;
+        }
+
+        static async Task<int> ProhibitAsync(IServiceProvider services, ActDatabase db, string[] args)
+        {
+            var assessmentText = FlagValue(args, "--assessment");
+            if (assessmentText is null || !Guid.TryParse(assessmentText, out var assessmentId))
+            {
+                Console.Error.WriteLine("error: --assessment ASSESSMENT_ID is required");
+                return ExitCodes.UsageError;
+            }
+
+            var portText = FlagValue(args, "--port");
+            if (portText is null || !int.TryParse(portText, out var port) || port is < 1 or > 65535)
+            {
+                Console.Error.WriteLine("error: --port PORT (1-65535) is required");
+                return ExitCodes.UsageError;
+            }
+
+            var protocol = ProtocolKind.Tcp;
+            if (FlagValue(args, "--protocol") is { } protocolText)
+            {
+                protocol = protocolText.Trim().ToLowerInvariant() switch
+                {
+                    "tcp" => ProtocolKind.Tcp,
+                    "http" => ProtocolKind.Http,
+                    "https" => ProtocolKind.Https,
+                    "tls" => ProtocolKind.Tls,
+                    _ => (ProtocolKind)(-1)
+                };
+                if ((int)protocol < 0)
+                {
+                    Console.Error.WriteLine("error: --protocol must be one of tcp|http|https|tls");
+                    return ExitCodes.UsageError;
+                }
+            }
+
+            Guid? baselineId = null;
+            if (FlagValue(args, "--baseline") is { } baselineRaw)
+            {
+                if (!Guid.TryParse(baselineRaw, out var parsedBaseline))
+                {
+                    Console.Error.WriteLine("error: --baseline must be a baseline identifier");
+                    return ExitCodes.UsageError;
+                }
+
+                baselineId = parsedBaseline;
+            }
+
+            var actor = FlagValue(args, "--actor")?.Trim() is { Length: > 0 } explicitActor ? explicitActor : "cli-operator";
+
+            try
+            {
+                var baseline = await BaselineOperations.MarkProhibitedAsync(
+                    db, assessmentId, baselineId, port, protocol, actor, CorrelationId.New());
+                return await OutputWriter.WriteAsync(services,
+                    "baseline " + baseline.BaselineId + ": port " + port + "/" + protocol
+                    + " is prohibited; comparison will report it as unexpected service exposure if it ever answers.",
+                    JsonSerializer.Serialize(new
+                    {
+                        baselineId = baseline.BaselineId,
+                        scopeId = baseline.ScopeId,
+                        port,
+                        protocol = protocol.ToString(),
+                        status = "Prohibited"
+                    }, JsonOpts.Indented));
+            }
+            catch (ActException ex)
+            {
+                Console.Error.WriteLine("error: " + ex.SafeMessage);
+                return ExitCodes.RuntimeFailure;
+            }
         }
     }
 

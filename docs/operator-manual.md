@@ -121,7 +121,13 @@ new drift until someone triages them and re-creates the baseline.
 artemis baseline create --assessment ASSESSMENT_ID [--name NAME] [--actor OPERATOR]
 artemis baseline list --scope SCOPE_ID            # or: --assessment ASSESSMENT_ID
 artemis baseline compare --assessment ASSESSMENT_ID [--baseline BASELINE_ID]
+artemis baseline prohibit --assessment ASSESSMENT_ID --port PORT [--protocol tcp|http|https|tls] [--baseline BASELINE_ID]
 ```
+
+`prohibit` records an explicit operator decision that a port must never answer again on that
+scope: any future observation there becomes **unexpected-service-exposed** drift at High.
+It supersedes an Expected entry for the same port, is idempotent to re-issue, and is audited
+like every baseline operation.
 
 Comparison runs one later assessment of the same scope against the stored snapshot and reports
 two drift classes side by side:
@@ -133,8 +139,8 @@ two drift classes side by side:
   that simply did not run this time.
 
 The console **Baselines** page drives the same operations: create a baseline from any recent run,
-then compare it against later runs with one click. Every create and compare lands in the
-hash-chained audit log (`baseline.created`, `baseline.compared`).
+then compare it against later runs with one click. Every create, prohibit, and compare lands in
+the hash-chained audit log (`baseline.created`, `baseline.prohibited`, `baseline.compared`).
 
 `compare` is pipeline-friendly: exit code 0 when there is no drift, exit code 5 (gate failed)
 when any observation exists - so scheduled assessments can fail loudly on change instead of
@@ -210,7 +216,7 @@ While a console host or external ticks drive schedules, retention maintenance ru
 
 ## 6. Advisory feeds
 
-OSV integration ships disabled by default. When enabled, retrieved advisories carry retrieval time and staleness flags - stale data is labeled stale, never silently presented as current. Offline snapshots with optional SHA-256 pinning work fully air-gapped.
+OSV integration ships disabled by default. When enabled, `artemis feed update` performs one LIVE single-package query against the configured OSV endpoint through the production advisory client - proving reachability and response parseability end to end - and records the feed as current only after that round trip succeeds. Transport, HTTP, and parse failures keep the feed stale with the specific reason attached: absence is visible, never silent. Offline snapshots with optional SHA-256 pinning work fully air-gapped.
 
 
 ## 7. Scheduled assessments
@@ -235,7 +241,7 @@ Execution model:
 
 ## 8. Emergency procedures
 
-Console button or `artemis assessment stop --emergency`: arms the latch, cancels all in-flight cancellable work (engines poll the persisted flag every two seconds), and denies all new check execution until explicitly disarmed by an operator. The stop lives on two surfaces by design - the running host's in-process latch AND a persisted flag in the database - so a stop armed from one process is honored by every other process sharing that database.
+Console button or `artemis assessment stop --emergency`: arms the latch, cancels all in-flight cancellable work (engines poll the persisted flag every two seconds by default - hosts may tighten this via `Act:EmergencyStopWatch:PollInterval`), and denies all new check execution until explicitly disarmed by an operator. A run cancelled mid-flight is recorded as **Stopped** and audited (`assessment.stopped`) before cancellation propagates, so no assessment row is ever left stranded in Running. The stop lives on two surfaces by design - the running host's in-process latch AND a persisted flag in the database - so a stop armed from one process is honored by every other process sharing that database.
 
 Disarming is always an explicit, audited operator action; nothing disarms itself:
 

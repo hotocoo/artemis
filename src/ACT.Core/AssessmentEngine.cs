@@ -174,8 +174,12 @@ public sealed class AssessmentEngine(
 
             return summary;
         }
-        catch (OperationCanceledException) when (!externalCancellation.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
+            // Every cancellation route - the runtime budget, an operator abort, or the
+            // emergency-stop watcher cancelling the linked token mid-run - ends here. The run's
+            // honest terminal state is STOPPED, recorded before rethrowing so no assessment row
+            // is ever stranded in Running and the stop is always audited.
             await recorder.SetAssessmentStateAsync(request.AssessmentId, AssessmentRunState.Stopped, CancellationToken.None);
             await auditSink.AppendAsync(new AuditDraft("engine", "assessment.stopped",
                 "assessment", request.AssessmentId.ToString(), "runtime-limit-or-emergency",
