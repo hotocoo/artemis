@@ -146,52 +146,80 @@ public sealed class EndToEndAssessmentTests(LabFixture lab)
     public async Task OversizedGzipResponseIsTruncatedNotFatal()
     {
         // Raw socket server that answers with a gzip bomb: 10 MB of zeros compressed to ~10 KB.
-        var port = GetFreeListenerPort();
-        using var listener = new TcpListener(IPAddress.Loopback, port);
-        listener.Start();
-        var serverTask = Task.Run(async () =>
+        // Windows resets abrupt raw-socket closes far more eagerly than Unix, so the server
+        // half-closes (FIN before close) and the assertion retries once on a transport-level
+        // abort - runner security software has been observed killing loopback raw sockets.
+        for (var attempt = 1; ; attempt++)
         {
-            while (listener.Server.IsBound)
+            var port = GetFreeListenerPort();
+            using var listener = new TcpListener(IPAddress.Loopback, port);
+            listener.Start();
+            var serverTask = Task.Run(async () =>
             {
-                var client = await listener.AcceptTcpClientAsync();
-                _ = Task.Run(async () =>
+                while (listener.Server.IsBound)
                 {
-                    await using var stream = client.GetStream();
-                    var body = CompressZeros(10 * 1024 * 1024);
-                    var cr = ((char)13).ToString();
-                    var lf = ((char)10).ToString();
-                    var header = Encoding.ASCII.GetBytes(
-                        "HTTP/1.1 200 OK" + cr + lf +
-                        "Content-Type: text/plain" + cr + lf +
-                        "Content-Encoding: gzip" + cr + lf +
-                        "Content-Length: " + body.Length + cr + lf +
-                        "Connection: close" + cr + lf + cr + lf);
-                    await stream.WriteAsync(header);
-                    await stream.WriteAsync(body);
-                    await stream.FlushAsync();
-                    client.Close();
-                });
+                    var client = await listener.AcceptTcpClientAsync();
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            await using var stream = client.GetStream();
+                            var body = CompressZeros(10 * 1024 * 1024);
+                            var cr = ((char)13).ToString();
+                            var lf = ((char)10).ToString();
+                            var header = Encoding.ASCII.GetBytes(
+                                "HTTP/1.1 200 OK" + cr + lf +
+                                "Content-Type: text/plain" + cr + lf +
+                                "Content-Encoding: gzip" + cr + lf +
+                                "Content-Length: " + body.Length + cr + lf +
+                                "Connection: close" + cr + lf + cr + lf);
+                            await stream.WriteAsync(header);
+                            await stream.WriteAsync(body);
+                            await stream.FlushAsync();
+                            // FIN first: lets the peer read every buffered byte before close.
+                            client.Client.Shutdown(SocketShutdown.Send);
+                        }
+                        catch (Exception)
+                        {
+                            // The truncated peer may already be gone; nothing to report.
+                        }
+                        finally
+                        {
+                            client.Close();
+                        }
+                    });
+                }
+            });
+
+            try
+            {
+                var scope = BuildLabScope() with { PermittedPorts = [PortRange.Single(port)] };
+                var budget = ResourceBudget.FromScope(scope, EngineDefaults.Conservative) with { MaxBodyBytes = 256 * 1024 };
+                var context = BuildContext(scope, budget);
+
+                await using var engine = context.Http;
+                SafeHttpResponse response;
+                try
+                {
+                    response = await engine.SendAsync(
+                        SafeHttpRequest.Get(new Uri($"http://127.0.0.1:{port}/bomb"), CorrelationId.New()),
+                        CancellationToken.None);
+                }
+                catch (HttpRequestException ex) when (attempt == 1
+                    && ex.InnerException is IOException or SocketException)
+                {
+                    continue; // transport-level abort by the host environment, not the product
+                }
+
+                Assert.True(response.TruncatedDueToLimits, "Decompression bomb should have been truncated.");
+                Assert.InRange(response.BodyBytes.Length, 128 * 1024, 256 * 1024 + 64 * 1024);
+                return;
             }
-        });
-
-        try
-        {
-            var scope = BuildLabScope() with { PermittedPorts = [PortRange.Single(port)] };
-            var budget = ResourceBudget.FromScope(scope, EngineDefaults.Conservative) with { MaxBodyBytes = 256 * 1024 };
-            var context = BuildContext(scope, budget);
-
-            await using var engine = context.Http;
-            var response = await engine.SendAsync(
-                SafeHttpRequest.Get(new Uri($"http://127.0.0.1:{port}/bomb"), CorrelationId.New()),
-                CancellationToken.None);
-
-            Assert.True(response.TruncatedDueToLimits, "Decompression bomb should have been truncated.");
-            Assert.InRange(response.BodyBytes.Length, 128 * 1024, 256 * 1024 + 64 * 1024);
-        }
-        finally
-        {
-            listener.Stop();
-            try { await serverTask; } catch (Exception) { /* listener loop ends with stop */ }
+            finally
+            {
+                listener.Stop();
+                try { await serverTask; } catch (Exception) { /* listener loop ends with stop */ }
+            }
         }
     }
 
