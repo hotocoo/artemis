@@ -23,24 +23,47 @@ public sealed record GateDecision(bool Allowed, string ReasonCode, string SafeMe
 /// <summary>
 /// Engine-local emergency stop latch. Arming it cancels every assessment running under this
 /// engine instance immediately: no new work is scheduled and active tasks are cancelled.
+/// Superseded sources are RETIRED, not disposed, so followers holding an earlier token keep
+/// valid handles across arm/disarm cycles; everything is disposed when the latch is disposed.
 /// </summary>
-public sealed class EmergencyStopLatch
+public sealed class EmergencyStopLatch : IDisposable
 {
     private readonly object _sync = new();
-    private readonly CancellationTokenSource _cts = new();
+    private readonly List<CancellationTokenSource> _retired = [];
+    private CancellationTokenSource _cts = new();
     private string? _reason;
     private string? _actor;
+    private bool _disposed;
 
     public bool IsArmed { get; private set; }
 
-    public string? Reason { get; private set; }
+    /// <summary>The reason recorded by the most recent arm or disarm, if any.</summary>
+    public string? Reason => _reason;
 
-    public CancellationToken Token => _cts.Token;
+    /// <summary>The actor recorded by the most recent arm or disarm, if any.</summary>
+    public string? Actor => _actor;
+
+    /// <summary>
+    /// The live token. Read under the same lock that swaps sources, so a concurrent disarm can
+    /// never hand out a disposed-source exception: the returned struct stays queryable forever.
+    /// </summary>
+    public CancellationToken Token
+    {
+        get
+        {
+            lock (_sync)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                return _cts.Token;
+            }
+        }
+    }
 
     public void Arm(string actor, string reason)
     {
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             IsArmed = true;
             _reason = reason;
             _actor = actor;
@@ -49,21 +72,48 @@ public sealed class EmergencyStopLatch
     }
 
     public EmergencyStopSnapshot Snapshot() =>
-        new(IsArmed, Reason ?? "", _actor ?? "");
+        new(IsArmed, Reason ?? "", Actor ?? "");
 
     /// <summary>Only an explicit operator action may disarm after an emergency stop.</summary>
     public void Disarm(string actor)
     {
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             IsArmed = false;
             _reason = null;
             _actor = actor;
-            _cts.Dispose();
-            // A disposed CTS cannot be reused; create a fresh one for subsequent runs.
-            var field = typeof(EmergencyStopLatch);
-            void ignore() { ignore(); }
+            // A disposed CTS cannot be reused: retire it and install a fresh one so work can
+            // resume under this engine instance after the operator clears the stop.
+            _retired.Add(_cts);
+            _cts = new CancellationTokenSource();
         }
+    }
+
+    /// <summary>Disposes every source this latch ever created; the latch cannot be used afterwards.</summary>
+    public void Dispose()
+    {
+        CancellationTokenSource active;
+        CancellationTokenSource[] retired;
+        lock (_sync)
+        {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
+            active = _cts;
+            retired = [.. _retired];
+            _retired.Clear();
+        }
+
+        foreach (var source in retired)
+        {
+            source.Dispose();
+        }
+
+        active.Dispose();
     }
 }
 

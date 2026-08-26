@@ -4,10 +4,14 @@ namespace ACT.Policy;
 /// Thread-safe emergency-stop latch. Once armed the latch stays armed (the first reason wins)
 /// until an operator disarms. The exposed token source is cancelled on arm and replaced with a
 /// fresh, non-cancelled source on disarm, so followers observe exactly the latch state.
+/// Superseded sources are RETIRED, not disposed: any handle this latch ever handed out stays
+/// valid until the latch itself is disposed, so a follower racing a disarm can query its token,
+/// register callbacks, or cancel without ever observing ObjectDisposedException.
 /// </summary>
 public sealed class EmergencyStop : IDisposable
 {
     private readonly object _gate = new();
+    private readonly List<CancellationTokenSource> _retired = [];
     private CancellationTokenSource _tokenSource = new();
     private string? _armedReason;
     private bool _disposed;
@@ -54,27 +58,26 @@ public sealed class EmergencyStop : IDisposable
 
     /// <summary>
     /// Disarms the latch and issues a fresh cancellation token source.
-    /// <paramref name="actor"/> records who disarmed, for audit trails.
+    /// <paramref name="actor"/> records who disarmed, for audit trails. The superseded source
+    /// is retired, not disposed, so handles already handed out stay usable.
     /// </summary>
     public void Disarm(string actor)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(actor);
-        CancellationTokenSource stale;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            stale = _tokenSource;
+            _retired.Add(_tokenSource);
             _tokenSource = new CancellationTokenSource();
             _armedReason = null;
         }
-
-        stale.Dispose();
     }
 
-    /// <summary>Disposes the active token source; the latch cannot be used afterwards.</summary>
+    /// <summary>Disposes every source this latch ever created; the latch cannot be used afterwards.</summary>
     public void Dispose()
     {
-        CancellationTokenSource stale;
+        CancellationTokenSource active;
+        CancellationTokenSource[] retired;
         lock (_gate)
         {
             if (_disposed)
@@ -83,9 +86,18 @@ public sealed class EmergencyStop : IDisposable
             }
 
             _disposed = true;
-            stale = _tokenSource;
+            active = _tokenSource;
+            retired = [.. _retired];
+            _retired.Clear();
         }
 
-        stale.Dispose();
+        foreach (var source in retired)
+        {
+            source.Dispose();
+        }
+
+        // The active source dies last and stays installed, preserving the pre-existing
+        // post-dispose contract: touching TokenSource afterwards fails with ObjectDisposedException.
+        active.Dispose();
     }
 }
