@@ -56,7 +56,9 @@ public sealed class BaselineDriftScenarioTests
             var assessment1 = await RegisterAsync(db, scope, "drift-run-1");
             await RunDiscoveryAsync(db, scope, assessment1);
             var observed = await db.ListServicesAsync(assessment1.AssessmentId, 100);
-            Assert.Equal([(listenerA.Port, ProtocolKind.Tcp), (listenerB.Port, ProtocolKind.Tcp)],
+            var expectedPairs = new[] { (listenerA.Port, ProtocolKind.Tcp), (listenerB.Port, ProtocolKind.Tcp) }
+                .OrderBy(static p => p.Item1).ToList();
+            Assert.Equal(expectedPairs,
                 observed.Select(o => (o.Port, o.Protocol)).Distinct().OrderBy(o => o.Port).ToList());
 
             // Baseline creation snapshots both as EXPECTED...
