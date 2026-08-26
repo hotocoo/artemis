@@ -20,16 +20,22 @@ public sealed class LabFixture : IAsyncLifetime
 
     public Uri BaseUrl { get; private set; } = new("http://127.0.0.1:1");
 
+    /// <summary>HTTPS origin presenting the lab's self-signed, currently-valid certificate.</summary>
+    public Uri HttpsBaseUrl { get; private set; } = new("https://127.0.0.1:1");
+
     public async Task InitializeAsync()
     {
         var port = GetFreePort();
         BaseUrl = new Uri($"http://127.0.0.1:{port}");
+        var httpsPort = GetFreePort();
+        HttpsBaseUrl = new Uri($"https://127.0.0.1:{httpsPort}");
 
         var labDll = FindLabDll();
         var info = new ProcessStartInfo
         {
             FileName = "dotnet",
-            Arguments = (char)34 + labDll + (char)34 + " --port " + port + " --lab-token e2e-lab-token",
+            Arguments = (char)34 + labDll + (char)34 + " --port " + port
+                + " --https-port " + httpsPort + " --lab-token e2e-lab-token",
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false

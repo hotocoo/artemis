@@ -273,10 +273,28 @@ public static class RegressionCommands
     {
         var uri = new Uri(baseUrlText);
         var port = uri.IsDefaultPort ? (uri.Scheme == "https" ? 443 : 80) : uri.Port;
+
+        // The DNS-pinning gate authorizes the HOST before any socket connects, and resolved
+        // addresses are only ever covered by hostname/IP-range matchers - a bare URL prefix
+        // entry alone can never satisfy either check. The replay scope therefore allowlists the
+        // host itself (CIDR form for address literals, exact-hostname form otherwise) next to
+        // the URL prefix that keeps request-level authorization path-scoped. Tcp is permitted
+        // because the pinning gate classifies every non-default port as a Tcp candidate; the
+        // replayed HTTP requests themselves still speak http/https on top of that socket.
+        string hostEntry;
+        if (IPAddress.TryParse(uri.Host, out var literal))
+        {
+            hostEntry = literal + (literal.AddressFamily == AddressFamily.InterNetwork ? "/32" : "/128");
+        }
+        else
+        {
+            hostEntry = uri.Host;
+        }
+
         return new ScopeDefinition(
             Guid.NewGuid(), Guid.NewGuid(), "regression-runner", "artemis",
-            TargetTypeKind.Url, [baseUrlText.TrimEnd('/') + "/"], [],
-            [ProtocolKind.Http, ProtocolKind.Https], [PortRange.Single(port)],
+            TargetTypeKind.Url, [baseUrlText.TrimEnd('/') + "/", hostEntry], [],
+            [ProtocolKind.Tcp, ProtocolKind.Http, ProtocolKind.Https], [PortRange.Single(port)],
             10, 1, TimeSpan.FromMinutes(2), 50,
             [CheckCategory.Authorization], [], true,
             TimeSpan.FromDays(1), RedactionPolicy.Standard,

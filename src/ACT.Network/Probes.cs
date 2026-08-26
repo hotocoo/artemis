@@ -183,7 +183,13 @@ public sealed class TlsHandshakeProbe(IScopeValidator scopeValidator, IDnsGate d
             userCertificateValidationCallback: (_, cert, chain, policyErrors) =>
             {
                 if (cert is X509Certificate2 x509) Capture(x509, chain, policyErrors, errors, chainSubjects);
-                return false; // Never trust; we only observe.
+
+                // Observe-only acceptance: the scope validator and DNS gate have already
+                // authorized this exact endpoint, and aborting on trust failures would hide
+                // precisely the certificate state this probe exists to inspect. Nothing is
+                // trusted by this decision - the captured chain errors travel with the result
+                // and drive the trust findings.
+                return true;
             });
 
         try

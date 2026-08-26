@@ -34,11 +34,14 @@ public sealed class Orchestrator(ICheckGate gate)
                 continue;
             }
 
+            var contextDecisions = new List<ExclusionDecision>();
+            var composedAnywhere = false;
+
             foreach (var context in contexts)
             {
                 if (!check.Metadata.SupportedTargetTypes.Overlaps(AssetKindMapping.For(context.Asset.Kind)))
                 {
-                    decisions.Add(new ExclusionDecision(check.Metadata.Id.Value, "TARGET_TYPE_MISMATCH",
+                    contextDecisions.Add(new ExclusionDecision(check.Metadata.Id.Value, "TARGET_TYPE_MISMATCH",
                         $"Check does not support asset kind {context.Asset.Kind}."));
                     continue;
                 }
@@ -51,7 +54,7 @@ public sealed class Orchestrator(ICheckGate gate)
                 };
                 if (check.Metadata.RequiredProtocols.Count > 0 && !check.Metadata.RequiredProtocols.Contains(protocol))
                 {
-                    decisions.Add(new ExclusionDecision(check.Metadata.Id.Value, "PROTOCOL_MISMATCH",
+                    contextDecisions.Add(new ExclusionDecision(check.Metadata.Id.Value, "PROTOCOL_MISMATCH",
                         $"Check requires {string.Join("/", check.Metadata.RequiredProtocols)}; target speaks {protocol}."));
                     continue;
                 }
@@ -59,12 +62,21 @@ public sealed class Orchestrator(ICheckGate gate)
                 var estimated = Math.Max(1, check.Metadata.NetworkBehavior.MaxRequestsPerTarget);
                 if (!accountant.TryReserveRequests(estimated))
                 {
-                    decisions.Add(new ExclusionDecision(check.Metadata.Id.Value, "BUDGET_EXHAUSTED",
+                    contextDecisions.Add(new ExclusionDecision(check.Metadata.Id.Value, "BUDGET_EXHAUSTED",
                         "Remaining request budget could not cover this check's declared footprint."));
                     continue;
                 }
 
+                composedAnywhere = true;
                 work.Add(new WorkItem(check, context, estimated));
+            }
+
+            // Per-context rejections only become stored decisions when NO context admitted the
+            // check: a check that executed against one context must not also carry an "excluded"
+            // row that would contradict its own execution ledger above.
+            if (!composedAnywhere)
+            {
+                decisions.AddRange(contextDecisions);
             }
         }
 

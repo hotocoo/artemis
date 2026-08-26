@@ -194,6 +194,11 @@ public static class ArtemisHostFactory
                 console.SingleLine = true;
                 console.TimestampFormat = "HH:mm:ss ";
             });
+
+            // STDOUT IS A DATA CHANNEL: --json consumers and redirected output parse it.
+            // Diagnostics belong on stderr, never interleaved with command payloads.
+            logging.Services.Configure<Microsoft.Extensions.Logging.Console.ConsoleLoggerOptions>(
+                console => console.LogToStandardErrorThreshold = LogLevel.Trace);
         });
 
         // Components with primary constructors (e.g. AssessmentEngine) request the non-generic

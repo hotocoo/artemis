@@ -32,11 +32,32 @@ public static class CheckRegistry
             inner.ExecuteAsync(context, cancellationToken);
     }
 
+    /// <summary>The targeted battery plus whether the conventional OpenAPI document answered.</summary>
+    public sealed record TargetedCheckSet(IReadOnlyList<ISecurityCheck> Checks, bool OpenApiDocumentPublished);
+
     /// <summary>Network/web-facing checks bound to a specific base URL.</summary>
-    public static IReadOnlyList<ISecurityCheck> CreateTargetedChecks(Uri baseUrl)
+    public static IReadOnlyList<ISecurityCheck> CreateTargetedChecks(Uri baseUrl) =>
+        CreateTargetedCheckSet(baseUrl).Checks;
+
+    /// <summary>
+    /// Assembles the URL-addressable battery and reports honestly whether the OpenAPI surface
+    /// analysis was composed at all, so its absence can become a recorded planning decision
+    /// instead of an unexplained gap in coverage. When TLS probe services are supplied and the
+    /// origin speaks https, the ACT.Tls handshake-inspection battery joins the composition; on
+    /// http origins the trio is still handed to the orchestrator so its PROTOCOL_MISMATCH
+    /// exclusion becomes a persisted fact rather than a silent omission.
+    /// </summary>
+    public static TargetedCheckSet CreateTargetedCheckSet(Uri baseUrl, TlsServices? tls = null)
     {
         var list = new List<ISecurityCheck>();
         list.AddRange(BuildWebChecks());
+
+        if (tls is not null)
+        {
+            list.Add(new CertificateTrustCheck(tls));
+            list.Add(new ProtocolVersionsCheck(tls));
+            list.Add(new CipherSuiteCheck(tls));
+        }
 
         var openApiUrl = new Uri(baseUrl, "/api/openapi.json");
         using var probe = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -53,18 +74,36 @@ public static class CheckRegistry
         {
             list.Add(new ApiSurfaceAnalysisCheck(() => document, baseUrl));
         }
-        return list;
+        return new TargetedCheckSet(list, document is not null);
     }
 
-    /// <summary>Catalog listing used by 'artemis check list'.</summary>
+    /// <summary>
+    /// Identifiers of the URL-addressable web checks, so a launch that could not compose them
+    /// can record WHY through the planning-exclusion ledger instead of leaving a silent gap.
+    /// </summary>
+    public static IReadOnlyList<string> WebCheckIds { get; } =
+        [.. BuildWebChecks().Select(c => c.Metadata.Id.Value)];
+
+    /// <summary>Identifiers of the network-free repository checks, same purpose as WebCheckIds.</summary>
+    public static IReadOnlyList<string> RepositoryCheckIds { get; } =
+        [.. CreateRepositoryChecks(
+            new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard)))
+            .Select(c => c.Metadata.Id.Value)];
+
+    /// <summary>Catalog listing used by 'artemis check list' and by every coverage surface's
+    /// never-executed comparison; the TLS inspection checks appear through their static
+    /// metadata because their construction needs probe services no catalog read should build.</summary>
     public static IReadOnlyList<SecurityCheckMetadata> Catalog()
     {
-        var samples = new List<ISecurityCheck>();
-        samples.AddRange(BuildWebChecks());
+        var metadata = new List<SecurityCheckMetadata>();
+        metadata.AddRange(BuildWebChecks().Select(c => c.Metadata));
+        metadata.Add(CertificateTrustCheck.Describe());
+        metadata.Add(ProtocolVersionsCheck.Describe());
+        metadata.Add(CipherSuiteCheck.Describe());
         var evidence = new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard));
-        samples.Add(new SourceAnalysisCheck(evidence));
-        samples.Add(new DependencyAnalysisCheck(DisabledAdvisoryProvider.Instance, evidence));
-        return [.. samples.Select(c => c.Metadata)];
+        metadata.Add(new SourceAnalysisCheck(evidence).Metadata);
+        metadata.Add(new DependencyAnalysisCheck(DisabledAdvisoryProvider.Instance, evidence).Metadata);
+        return metadata;
     }
 
     /// <summary>

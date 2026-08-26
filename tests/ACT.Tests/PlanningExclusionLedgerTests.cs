@@ -147,6 +147,51 @@ public class PlanningExclusionLedgerTests
         Assert.Empty(recorder.PlanExclusions);
     }
 
+    [Fact]
+    public async Task Engine_MergesCompositionExclusionsWithPlanAndPersistsOneDeterministicRecord()
+    {
+        var recorder = new CapturingRecorder();
+        var sink = new CapturingAuditSink();
+        var scope = MakeScope();
+
+        // A gate that denies one composed check, plus a host that never composed two more:
+        // the persisted record must carry BOTH decision kinds as stored facts, ordered
+        // deterministically regardless of which side decided first.
+        var gate = new DenyingGate("SCOPE_CATEGORY_NOT_PERMITTED", "The category policy excludes this check.");
+        var engine = new AssessmentEngine(gate, recorder, sink, NullLogger.Instance);
+
+        var composition = new List<ExclusionDecision>
+        {
+            new("ACT-Z-HOST-001", "NO_HTTP_ORIGIN", "No HTTP origin was resolved for this scope; the check cannot address anything."),
+            new("ACT-A-HOST-002", "TARGET_TYPE_MISMATCH", "Check does not support asset kind Url.")
+        };
+
+        var summary = await engine.RunAsync(new AssessmentRunRequest(
+            scope.AssessmentId, CorrelationId.New(), scope,
+            ResourceBudget.FromScope(scope, EngineDefaults.Conservative),
+            [FakeCheck("ACT-BENCH-D-004")],
+            [], PreexistingFindings: null, Scorer: null,
+            CompositionExclusions: composition), CancellationToken.None);
+
+        Assert.Empty(summary.CheckResults);
+        Assert.Equal(3, summary.Exclusions.Count);
+        Assert.Equal(3, recorder.PlanExclusions.Count);
+        Assert.All(recorder.PlanExclusions, e => Assert.Equal(scope.AssessmentId, e.AssessmentId));
+
+        // Deterministic ordinal order by check id then reason code across BOTH sources.
+        Assert.Equal(
+            [("ACT-A-HOST-002", "TARGET_TYPE_MISMATCH"),
+             ("ACT-BENCH-D-004", "SCOPE_CATEGORY_NOT_PERMITTED"),
+             ("ACT-Z-HOST-001", "NO_HTTP_ORIGIN")],
+            [.. summary.Exclusions.Select(e => (e.CheckId, e.ReasonCode))]);
+        Assert.Equal(
+            summary.Exclusions.Select(e => (e.CheckId, e.ReasonCode)).ToArray(),
+            recorder.PlanExclusions.Select(e => (e.CheckId, e.ReasonCode)).ToArray());
+
+        Assert.Contains(sink.Drafts, d => d.Action == "plan.exclusions"
+            && d.Result.Contains("3 checks excluded", StringComparison.Ordinal));
+    }
+
     // ---------- coverage surfaces read stored reasons, never guesses ----------
 
     [Fact]
