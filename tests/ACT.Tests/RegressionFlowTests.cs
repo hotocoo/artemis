@@ -44,7 +44,8 @@ public sealed class RegressionFlowTests
             "why it matters", "technical explanation",
             new RemediationGuidance("Fix it.", ["step-one"], ["ref-one"]),
             new FingerprintComponents(checkId, "target.local", "resource", classification))
-            with { PriorityScore = 90 };
+            with
+        { PriorityScore = 90 };
     }
 
     private static AuthorizationFixtureSet CrossTenantFixtures() => new(

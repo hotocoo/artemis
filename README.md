@@ -55,4 +55,6 @@ artemis scope validate --file samples/scope.example.json
 
 ## Status
 
-Production build targeting Windows x64 self-contained single-file publish; cross-platform development supported.
+Production builds are self-contained single-file executables for **win-x64**, **linux-x64**, **linux-arm64**, **osx-arm64**, and **osx-x64**, produced by `scripts/build-release.sh` (any Unix shell) or the GitHub Actions `release` workflow, each shipping SHA-256 checksums, a signed-manifest inventory, and a CycloneDX SBOM. Linux deployments additionally require OpenSSL 3 (`libssl3`, present on effectively all modern distributions); no other native dependencies exist. The Authenticode signing step remains Windows-only and optional.
+
+CI runs the full test matrix natively on Ubuntu, macOS, and Windows before any release is packaged.

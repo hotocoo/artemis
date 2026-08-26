@@ -18,5 +18,10 @@
     <NeutralLanguage>en</NeutralLanguage>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <AccelerateBuildsInVisualStudio>true</AccelerateBuildsInVisualStudio>
+    <!-- Deterministic tooling must never vary with host locale, and self-contained Linux
+         deployments must not depend on an ICU package being installed. Every comparison and
+         parse in the codebase is already explicit Ordinal/InvariantCulture; this freezes that
+         contract into the runtime. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
 </Project>

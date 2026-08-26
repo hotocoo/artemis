@@ -34,7 +34,8 @@ public class BaselineTests
             "technical explanation",
             new RemediationGuidance("Fix it.", ["step-one"], []),
             new FingerprintComponents(CheckId.From("CHK-TST"), "target.local", "resource", classification))
-        with { Status = status };
+        with
+        { Status = status };
 
     private static SecurityBaseline MakeBaseline(params string[] accepted) => new(
         Guid.NewGuid(),

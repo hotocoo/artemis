@@ -261,7 +261,8 @@ public class CoverageSurfaceTests
             "technical explanation",
             new RemediationGuidance("Fix it.", ["step-one"], []),
             new FingerprintComponents(CheckId.From("CHK-TST"), "target.local", "resource", classification))
-        with { Status = status };
+        with
+        { Status = status };
 
     private static ScopeDefinition MakeScope(Guid scopeId, Guid assessmentId) => new(
         ScopeId: scopeId,

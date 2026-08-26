@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text.Json;
-using ACT.Contracts;
 using ACT.Cli;
+using ACT.Contracts;
 using ACT.Persistence;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.DependencyInjection;

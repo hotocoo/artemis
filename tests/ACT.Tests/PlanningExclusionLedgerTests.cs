@@ -1,5 +1,5 @@
-using ACT.Contracts;
 using ACT.Cli;
+using ACT.Contracts;
 using ACT.Core;
 using ACT.Persistence;
 using Microsoft.Extensions.Logging.Abstractions;
