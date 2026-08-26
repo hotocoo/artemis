@@ -64,10 +64,12 @@ public sealed class BaselineDriftScenarioTests
             // Baseline creation snapshots both as EXPECTED...
             var baseline = await BaselineOperations.CreateAsync(
                 db, assessment1, "drill baseline", "scenario-operator", CorrelationId.New());
-            Assert.Equal(
-                [new ServiceBaselineEntry(listenerA.Port, ProtocolKind.Tcp, BaselineServiceStatus.Expected),
-                 new ServiceBaselineEntry(listenerB.Port, ProtocolKind.Tcp, BaselineServiceStatus.Expected)],
-                baseline.ExpectedServices);
+            var expectedEntries = new[]
+            {
+                new ServiceBaselineEntry(listenerA.Port, ProtocolKind.Tcp, BaselineServiceStatus.Expected),
+                new ServiceBaselineEntry(listenerB.Port, ProtocolKind.Tcp, BaselineServiceStatus.Expected)
+            }.OrderBy(static e => e.Port).ToList();
+            Assert.Equal(expectedEntries, baseline.ExpectedServices);
 
             // ...and the operator hardens it: port B must never answer again. The Expected
             // entry for B is superseded - a port cannot be both wanted and forbidden.
