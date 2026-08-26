@@ -42,50 +42,67 @@ public sealed class InFlightEmergencyStopTests(LabFixture lab)
         var db = provider.GetRequiredService<ActDatabase>();
         await db.InitializeAsync();
 
-        var scope = MakeSlowLabScope();
-        await db.CreateAssessmentAsync(new AssessmentRecord(
-            scope.AssessmentId, scope.ScopeId, "inflight-stop-e2e",
-            AssessmentRunState.Created, DateTimeOffset.UtcNow, null, null,
-            scope.OperatorIdentity, scope.Organization), scope);
-        await db.SetConfigAsync("scope:" + scope.AssessmentId.ToString("N"), scope);
-
-        var launch = AssessmentLauncher.LaunchAsync(
-            provider, scope, lab.BaseUrl, AuthorizationFixtureSet.None, CancellationToken.None);
-
-        // Wait until the engine has actually entered Running and work exists, then arm from
-        // "another process" by writing exactly what 'artemis assessment stop' persists.
-        var armedUtc = await WaitUntilRunningThenArm(db, scope.AssessmentId);
-
-        // The launcher propagates the engine's cancellation after marking the run stopped.
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            launch.WaitAsync(TimeSpan.FromSeconds(60)));
-
-        var record = await db.GetAssessmentAsync(scope.AssessmentId);
-        Assert.NotNull(record);
-        Assert.Equal(AssessmentRunState.Stopped, record!.State);
-
-        // No check completed AFTER the stop was armed: whatever was still executing at that
-        // moment ends as the engine's cancellation marker, never as a quiet success.
-        var runs = await db.ListCheckRunsAsync(scope.AssessmentId);
-        foreach (var run in runs)
+        // Up to three rounds: arm only once a check-run row proves real executed work, so the
+        // stop lands mid-run by construction. A run that ever finishes before arming is a
+        // scenario regression and fails loudly instead of passing vacuously.
+        for (var round = 1; round <= 3; round++)
         {
-            // A check finishing within the one watcher tick after the flag lands is still an
-            // honest pre-stop completion; anything later must carry a cancellation marker.
-            var cancelledMarker = run.Status is CheckExecutionStatus.TimedOut or CheckExecutionStatus.Failed_FailedClosed;
-            Assert.True(cancelledMarker || run.CompletedUtc < armedUtc + TimeSpan.FromMilliseconds(500),
-                run.CheckId + " completed well after the emergency stop was armed.");
+            var scope = MakeSlowLabScope();
+            await db.CreateAssessmentAsync(new AssessmentRecord(
+                scope.AssessmentId, scope.ScopeId, "inflight-stop-e2e",
+                AssessmentRunState.Created, DateTimeOffset.UtcNow, null, null,
+                scope.OperatorIdentity, scope.Organization), scope);
+            await db.SetConfigAsync("scope:" + scope.AssessmentId.ToString("N"), scope);
+
+            var launch = AssessmentLauncher.LaunchAsync(
+                provider, scope, lab.BaseUrl, AuthorizationFixtureSet.None, CancellationToken.None);
+
+            // Arm from "another process" by writing exactly what 'artemis assessment stop'
+            // persists - but only after the engine is Running AND has recorded an execution.
+            var armedUtc = await TryArmMidRunAsync(db, scope.AssessmentId);
+            if (armedUtc is null)
+            {
+                // The battery outran us; consume the launch result and take another round.
+                try { await launch.WaitAsync(TimeSpan.FromSeconds(60)); }
+                catch (OperationCanceledException) { }
+                continue;
+            }
+
+            // The launcher propagates the engine's cancellation after marking the run stopped.
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                launch.WaitAsync(TimeSpan.FromSeconds(60)));
+
+            var record = await db.GetAssessmentAsync(scope.AssessmentId);
+            Assert.NotNull(record);
+            Assert.Equal(AssessmentRunState.Stopped, record!.State);
+
+            // No check completed AFTER the stop was armed: whatever was still executing at that
+            // moment ends as the engine's cancellation marker, never as a quiet success.
+            var runs = await db.ListCheckRunsAsync(scope.AssessmentId);
+            foreach (var run in runs)
+            {
+                // A check finishing within one watcher tick after the flag lands is still an
+                // honest pre-stop completion; anything later must carry a cancellation marker.
+                var cancelledMarker = run.Status is CheckExecutionStatus.TimedOut or CheckExecutionStatus.Failed_FailedClosed;
+                Assert.True(cancelledMarker || run.CompletedUtc < armedUtc + TimeSpan.FromMilliseconds(500),
+                    run.CheckId + " completed well after the emergency stop was armed.");
+            }
+
+            var events = await db.ReadRecentAuditAsync(50);
+            Assert.Contains(events, e => e.Action == "assessment.stopped"
+                && e.ObjectId == scope.AssessmentId.ToString()
+                && e.Result.Contains("runtime-limit-or-emergency"));
+            Assert.True(await db.VerifyChainAsync());
+
+            // The persisted flag outlives the cancelled run until an operator disarms - the
+            // next launch attempt must be denied before any work, not merely cancelled later.
+            await Assert.ThrowsAsync<ActException>(() => AssessmentLauncher.LaunchAsync(
+                provider, MakeSlowLabScope(), lab.BaseUrl, AuthorizationFixtureSet.None, CancellationToken.None));
+            return;
         }
 
-        var events = await db.ReadRecentAuditAsync(50);
-        Assert.Contains(events, e => e.Action == "assessment.stopped"
-            && e.ObjectId == scope.AssessmentId.ToString()
-            && e.Result.Contains("runtime-limit-or-emergency"));
-        Assert.True(await db.VerifyChainAsync());
-
-        // The persisted flag outlives the cancelled run until an operator disarms - the next
-        // launch attempt must be denied before any work, not merely cancelled later.
-        await Assert.ThrowsAsync<ActException>(() => AssessmentLauncher.LaunchAsync(
-            provider, MakeSlowLabScope(), lab.BaseUrl, AuthorizationFixtureSet.None, CancellationToken.None));
+        throw new InvalidOperationException(
+            "Could not arm mid-run within three rounds: assessments completed before the flag landed.");
     }
 
     /// <summary>Low request rate keeps the battery running long enough to observe and interrupt.</summary>
@@ -99,7 +116,9 @@ public sealed class InFlightEmergencyStopTests(LabFixture lab)
         ExcludedTargets: [],
         PermittedProtocols: [ProtocolKind.Tcp, ProtocolKind.Http],
         PermittedPorts: [PortRange.Single(lab.BaseUrl.Port)],
-        RequestsPerSecond: 5,
+        // One token per second guarantees the battery spans multiple seconds on any runner:
+        // the stop must land mid-run by construction, not by winning a speed contest.
+        RequestsPerSecond: 1,
         ConcurrencyLimit: 2,
         MaxRuntime: TimeSpan.FromMinutes(5),
         MaxRequests: 500,
@@ -110,23 +129,37 @@ public sealed class InFlightEmergencyStopTests(LabFixture lab)
         DataRedactionPolicy: RedactionPolicy.Standard,
         AuthorizationStatement: "In-flight emergency stop scenario authorization.");
 
-    private static async Task<DateTimeOffset> WaitUntilRunningThenArm(ActDatabase db, Guid assessmentId)
+    /// <summary>
+    /// Arms the persisted flag only once the run is provably mid-flight: state Running AND at
+    /// least one recorded check execution. Returns null when the run reached a terminal state
+    /// before arming was possible (the caller retries with a fresh assessment).
+    /// </summary>
+    private static async Task<DateTimeOffset?> TryArmMidRunAsync(ActDatabase db, Guid assessmentId)
     {
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(60);
         while (DateTime.UtcNow < deadline)
         {
             var record = await db.GetAssessmentAsync(assessmentId);
-            if (record?.State == AssessmentRunState.Running)
+            if (record?.State is AssessmentRunState.Completed or AssessmentRunState.Failed or AssessmentRunState.Stopped)
             {
-                var armedUtc = DateTimeOffset.UtcNow;
-                await db.SetConfigAsync(AssessmentCommands.EmergencyFlagKey,
-                    new EmergencyStopFlag(armedUtc, "in-flight drill"));
-                return armedUtc;
+                return null;
             }
 
-            await Task.Delay(20);
+            if (record?.State == AssessmentRunState.Running)
+            {
+                var runs = await db.ListCheckRunsAsync(assessmentId);
+                if (runs.Count > 0)
+                {
+                    var armedUtc = DateTimeOffset.UtcNow;
+                    await db.SetConfigAsync(AssessmentCommands.EmergencyFlagKey,
+                        new EmergencyStopFlag(armedUtc, "in-flight drill"));
+                    return armedUtc;
+                }
+            }
+
+            await Task.Delay(10);
         }
 
-        throw new TimeoutException("Assessment never reached Running within 30 seconds.");
+        throw new TimeoutException("Assessment never became interruptible within 60 seconds.");
     }
 }
