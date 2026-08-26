@@ -120,9 +120,13 @@ public class ScopeEngineTests
     {
         // Regression: the CIDR branch matched any entry containing a slash, so an absolute path
         // was misread as an unparseable network range and repository scopes could never compile.
-        var matchers = CompiledScope.ParseEntry("/Users/dev/work/service", TargetTypeKind.LocalSourceRepository);
+        // The absolute path form is per-OS: forward slashes on Unix, a drive root on Windows.
+        var absolutePath = OperatingSystem.IsWindows()
+            ? "C:\\Users\\dev\\work\\service"
+            : "/Users/dev/work/service";
+        var matchers = CompiledScope.ParseEntry(absolutePath, TargetTypeKind.LocalSourceRepository);
         var repository = Assert.Single(matchers.OfType<LocalRepositoryMatcher>());
-        Assert.Equal("/Users/dev/work/service", repository.RootPath);
+        Assert.Equal(absolutePath, repository.RootPath);
     }
 
     [Fact]
