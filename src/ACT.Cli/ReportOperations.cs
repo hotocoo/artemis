@@ -112,11 +112,36 @@ public static class ReportOperations
     /// </summary>
     public static bool TryParseFormat(string? text, out ReportFormat format)
     {
-        if (!string.IsNullOrWhiteSpace(text) && !char.IsAsciiDigit(text[0])
-            && Enum.TryParse(text, ignoreCase: true, out format)
-            && format is ReportFormat.Json or ReportFormat.Csv or ReportFormat.Markdown
+        if (string.IsNullOrWhiteSpace(text) || char.IsAsciiDigit(text[0]))
+        {
+            format = ReportFormat.Json;
+            return false;
+        }
+
+        // Accept both the enum names ("Markdown") and the file extensions the console links and
+        // CLI --format flag use ("md"). The download route receives the extension from the URL
+        // segment, so refusing it would 404 the very link the Reports page renders.
+        var normalized = text.Trim();
+        if (Enum.TryParse<ReportFormat>(normalized, ignoreCase: true, out var byName)
+            && byName is ReportFormat.Json or ReportFormat.Csv or ReportFormat.Markdown
                 or ReportFormat.Html or ReportFormat.Sarif)
         {
+            format = byName;
+            return true;
+        }
+
+        var byExtension = normalized.ToLowerInvariant() switch
+        {
+            "json" => ReportFormat.Json,
+            "csv" => ReportFormat.Csv,
+            "md" or "markdown" => ReportFormat.Markdown,
+            "html" or "htm" => ReportFormat.Html,
+            "sarif" => ReportFormat.Sarif,
+            _ => (ReportFormat?)null
+        };
+        if (byExtension is { } resolved)
+        {
+            format = resolved;
             return true;
         }
 

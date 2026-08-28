@@ -14,4 +14,14 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- The integration tests exercise the console's HTTP handlers (emergency stop, triage)
+         through the real Pages class; internals visibility is scoped to that test assembly. -->
+    <InternalsVisibleTo Include="ACT.IntegrationTests" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The integration tests exercise the console's HTTP handlers (emergency stop, triage)
+         through the real Pages class; internals visibility is scoped to that test assembly. -->
+    <InternalsVisibleTo Include="ACT.IntegrationTests" />
+  </ItemGroup>
 </Project>

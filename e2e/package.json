@@ -1,0 +1,13 @@
+{
+  "name": "artemis-e2e-chaos",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Playwright-driven end-to-end chaos verification for Artemis: real binaries, real lab, real console UI, every what-if.",
+  "scripts": {
+    "chaos": "node chaos.mjs"
+  },
+  "dependencies": {
+    "playwright": "1.54.1"
+  }
+}

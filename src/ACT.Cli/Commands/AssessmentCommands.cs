@@ -1,6 +1,7 @@
 
 using System.Text.Json;
 using ACT.Contracts;
+using ACT.Core;
 using ACT.Persistence;
 using ACT.Policy;
 using Microsoft.Extensions.DependencyInjection;
@@ -94,7 +95,23 @@ public static class AssessmentCommands
 
         // The launch path is shared verbatim with scheduled executions so both entries get
         // identical authorization, budgeting, and audit behavior by construction.
-        var summary = await AssessmentLauncher.LaunchAsync(services, scope, baseUrl, fixtures, CancellationToken.None);
+        AssessmentRunSummary summary;
+        try
+        {
+            summary = await AssessmentLauncher.LaunchAsync(services, scope, baseUrl, fixtures, CancellationToken.None);
+        }
+        catch (OperationCanceledException)
+        {
+            // The honest outcome of an operator stop or runtime limit: the engine has already
+            // recorded the run as Stopped and audited it. The operator who pressed the button
+            // gets a clear verdict, never a stack trace - a raw exception here would read as a
+            // crash instead of the stop working.
+            Console.Error.WriteLine(
+                "assessment " + scope.AssessmentId +
+                ": run stopped (emergency stop or runtime limit). State recorded as Stopped; " +
+                "verify with 'artemis assessment status " + scope.AssessmentId + "'.");
+            return ExitCodes.RuntimeFailure;
+        }
 
         return await OutputWriter.WriteAsync(services,
             $"assessment {scope.AssessmentId} completed: {summary.ChecksExecuted} checks executed, " +
@@ -194,6 +211,7 @@ public static class AssessmentCommands
             return ExitCodes.UsageError;
         }
         var db = services.GetRequiredService<ActDatabase>();
+        await db.InitializeAsync();
         var record = await db.GetAssessmentAsync(id);
         if (record is null)
         {
@@ -227,25 +245,4 @@ public static class AssessmentCommands
         var index = Array.FindIndex(args, a => a == flag);
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
-}
-
-/// <summary>Run-scoped ledger collecting discovery output for the engine.</summary>
-public sealed class CollectingLedger : IAssessmentLedger
-{
-    private readonly List<AssetRecord> _assets = [];
-    private readonly List<ServiceObservation> _services = [];
-
-    public Task<AssetRecord> RecordAssetAsync(AssetRecord asset, CancellationToken cancellationToken)
-    {
-        lock (_assets) _assets.Add(asset);
-        return Task.FromResult(asset);
-    }
-
-    public Task<ServiceObservation> RecordServiceAsync(ServiceObservation service, CancellationToken cancellationToken)
-    {
-        lock (_services) _services.Add(service);
-        return Task.FromResult(service);
-    }
-
-    public IReadOnlyList<ServiceObservation> ObservedServices() => [.. _services];
 }
