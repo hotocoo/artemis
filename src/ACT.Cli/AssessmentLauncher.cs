@@ -131,7 +131,7 @@ public static class AssessmentLauncher
             evidenceFactory,
             Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance,
             fixtures, budget,
-            Ledger: new CollectingLedger(), LanguageModel: null);
+            Ledger: new PersistingAssessmentLedger(db), LanguageModel: null);
 
         var asset = BuildAsset(scope, compiled, baseUrl);
         await context.Ledger.RecordAssetAsync(asset, externalToken);
