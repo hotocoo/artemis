@@ -64,13 +64,33 @@ public static class ArtemisComposition
     }
 }
 
-/// <summary>Initializes the SQLite schema at host start so commands never race migrations.</summary>
+/// <summary>
+/// Initializes the SQLite schema at host start so commands never race migrations, then
+/// reconciles assessment rows stranded by a dead process so no surface ever describes a run
+/// that is neither alive nor dead.
+/// </summary>
 public sealed class DatabaseInitializationService(ActDatabase database, ILogger<DatabaseInitializationService> logger) : IHostedService
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
         await database.InitializeAsync(cancellationToken);
         logger.LogInformation("Artemis database initialized");
+
+        try
+        {
+            var reconciled = await AssessmentReconciliation.ReconcileOrphansAsync(database, cancellationToken);
+            if (reconciled > 0)
+            {
+                logger.LogWarning("Reconciled {Count} assessment row(s) stranded by a dead process", reconciled);
+            }
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Reconciliation is recovery, not a launch prerequisite: a broken database that
+            // already failed InitializeAsync is handled above; anything else must not wedge
+            // every command behind the recovery path.
+            logger.LogError(ex, "Assessment reconciliation failed; rows stay as stored");
+        }
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;

@@ -1043,10 +1043,28 @@ internal static class Pages
         catch (UnauthorizedAccessException) { return false; }
     }
 
-    public static Task<IResult> EmergencyStop(IServiceProvider sp)
+    /// <summary>
+    /// The console's emergency stop is GLOBAL, exactly like 'artemis assessment stop': it arms
+    /// this host's latch AND persists the flag every other process polls. The operator manual
+    /// promises the button cancels in-flight work - arming only the in-process latch would let a
+    /// CLI-launched run keep contacting targets under an armed stop, which is the trap an
+    /// operator must never fall into while an incident is live.
+    /// </summary>
+    public static async Task<IResult> EmergencyStop(IServiceProvider sp)
     {
-        sp.GetRequiredService<EmergencyStopProxy>().Arm("operator-console", "Emergency stop activated from web console.");
-        return Task.FromResult<IResult>(Results.Redirect("/", permanent: false));
+        const string reason = "Emergency stop activated from web console.";
+        var db = sp.GetRequiredService<ActDatabase>();
+        await db.SetConfigAsync(AssessmentCommands.EmergencyFlagKey,
+            new EmergencyStopFlag(DateTimeOffset.UtcNow, reason));
+        await db.AppendAuditAsync(new AuditDraft(
+            Actor: "operator-console",
+            Action: "assessment.emergency_stop",
+            ObjectType: "configuration",
+            ObjectId: AssessmentCommands.EmergencyFlagKey,
+            Result: reason,
+            Correlation: CorrelationId.New()));
+        sp.GetRequiredService<EmergencyStopProxy>().Arm("operator-console", reason);
+        return Results.Redirect("/", permanent: false);
     }
 
     /// <summary>

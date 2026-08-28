@@ -12,6 +12,25 @@ a version bump commits to; the product version itself lives once in
 
 ### Added
 
+- **Playwright-driven e2e chaos workflow (e2e/).** Real built binaries (CLI, console, lab) on real
+  loopback ports driven through a hostile operator lifecycle: happy-path assessment, fail-closed
+  malformed scopes, out-of-scope redirects, emergency stops armed mid-flight from BOTH the CLI and
+  the console, triage lifecycle through the rendered UI, concurrent assessments, baselines, all five
+  report formats, audit-chain verification, persistence across console restart, and crash-recovery
+  of stranded assessment rows. `bash e2e/run.sh` builds, installs Chromium, and runs the whole
+  workflow with per-check results and screenshots.
+- **Crash recovery for stranded assessment rows.** A hard crash (kill -9, power loss) used to leave
+  an assessment row in a non-terminal state forever, so surfaces would describe a run that is
+  neither alive nor dead. Every host start now reconciles rows whose stored scope's MaxRuntime plus
+  a grace window has fully elapsed since creation: they are marked Failed and audited as
+  assessment.crash_reconciled. Fresh rows - including ones a live process started moments ago -
+  are never touched, so two processes sharing one database never reconcile each other's live work.
+- **The console's emergency stop is now global, matching the operator manual.** The console button
+  previously armed only its own in-process latch, so a CLI-launched run kept contacting targets
+  under an armed stop - the exact trap the documented contract forbids. The button now persists the
+  same flag every process polls (audited as assessment.emergency_stop from operator-console)
+  before arming the local latch; console disarm already cleared it.
+
 - **The service-drift baseline scenario is live-proven end to end.** A real `ServiceDiscoveryCheck`
   observes real loopback services, a baseline is created and hardened through the new
   `artemis baseline prohibit` verb (`BaselineOperations.MarkProhibitedAsync`: supersedes any
@@ -32,6 +51,12 @@ a version bump commits to; the product version itself lives once in
 
 ### Fixed
 
+- **`artemis assessment start` dumped a stack trace when the run was stopped.** An operator stop or
+  runtime limit now prints a clear verdict (state recorded as Stopped, how to verify it) and exits
+  with the runtime-failure code instead of an unhandled OperationCanceledException.
+- **`artemis assessment status` failed with "database is not ready" on every launch.** It was the
+  one command that read the database without initializing it first; every other read command owns
+  its readiness, and status now does too.
 - **Emergency-stop latch race that failed ubuntu CI.** Superseded token sources are now RETIRED
   instead of disposed eagerly: any handle ever handed out stays queryable until latch disposal, so a
   follower racing a disarm can read `Token`, register callbacks, or cancel without ever observing

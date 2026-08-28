@@ -4,7 +4,7 @@
 
 - .NET SDK 10.x (see global.json), any OS for development; Windows required only for Authenticode signing.
 - Build: `dotnet build Artemis.slnx` - warnings are errors, analyzers on, nullable enabled.
-- Test tiers: unit (ACT.Tests), integration/E2E against the disposable lab (ACT.IntegrationTests), adversarial safety (ACT.SecurityTests), benchmarks (ACT.Benchmarks).
+- Test tiers: unit (ACT.Tests), integration/E2E against the disposable lab (ACT.IntegrationTests), adversarial safety (ACT.SecurityTests), benchmarks (ACT.Benchmarks), and a Playwright-driven e2e chaos workflow (`e2e/`) that drives the real built binaries through a hostile operator lifecycle (emergency stops mid-flight, crashes, concurrency, triage, reports, audit integrity, persistence) - run locally with `bash e2e/run.sh`.
 
 ## Writing a security check
 

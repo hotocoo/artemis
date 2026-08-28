@@ -52,3 +52,36 @@ jobs:
             echo "::error::Prohibited markers found in product code"
             exit 1
           fi
+
+  # Playwright-driven end-to-end chaos workflow: real built binaries (CLI, console, lab) on real
+  # loopback ports through a hostile operator lifecycle - emergency stops mid-flight, crashes,
+  # concurrency, triage, reports, audit integrity, persistence. Ubuntu-only to keep the matrix fast.
+  e2e-chaos:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build (Release)
+        run: dotnet build Artemis.slnx -c Release --nologo -v q
+      - name: Install Playwright + Chromium
+        working-directory: e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Run e2e chaos workflow
+        working-directory: e2e
+        run: node chaos.mjs
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-chaos-screenshots
+          path: /tmp/artemis-e2e-*/screenshots/
+          if-no-files-found: ignore
