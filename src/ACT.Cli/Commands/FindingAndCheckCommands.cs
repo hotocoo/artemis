@@ -79,7 +79,7 @@ public static class FindingCommands
                 .ToList();
 
             var human = string.Join(Environment.NewLine, rows.Select(f =>
-                $"[{f.TechnicalSeverity,-13}] p{f.PriorityScore,5:0} {f.Status,-12} {f.Fingerprint.Hash[..12]} {f.Title} ({f.TargetDisplay})"));
+                $"[{f.TechnicalSeverity,-13}] p{f.PriorityScore,5:0} {f.Status,-12} {f.FindingId} {f.Fingerprint.Hash[..12]} {f.Title} ({f.TargetDisplay})"));
             return await OutputWriter.WriteAsync(services,
                 human.Length == 0 ? "no findings stored" : human,
                 JsonSerializer.Serialize(rows.Select(f => new
@@ -98,15 +98,24 @@ public static class FindingCommands
                 }), JsonOpts.Indented));
         }
 
-        if (args[0] == "show" && args.Length > 1 && Guid.TryParse(args[1], out var id))
+        if (args[0] == "show")
         {
-            var all = await db.ListFindingsAsync(null, null, null, 100000);
-            var finding = all.FirstOrDefault(f => f.FindingId == id);
-            if (finding is null)
+            if (args.Length < 2)
             {
-                Console.Error.WriteLine("error: finding not found: " + id);
+                Console.Error.WriteLine("usage: artemis finding show FINDING_ID");
+                return ExitCodes.UsageError;
+            }
+
+            var all = await db.ListFindingsAsync(null, null, null, 100000);
+            var (resolved, prefixMatches) = FindingIdentifier.Resolve(all, args[1]);
+            if (resolved is null)
+            {
+                Console.Error.WriteLine(prefixMatches > 1
+                    ? $"error: fingerprint prefix '{args[1]}' matches {prefixMatches} findings; use a longer prefix or the finding id"
+                    : "error: finding not found: " + args[1]);
                 return ExitCodes.RuntimeFailure;
             }
+            var finding = resolved;
             var detail = new
             {
                 finding.FindingId,
@@ -147,8 +156,41 @@ public static class FindingCommands
                 JsonSerializer.Serialize(detail, JsonOpts.Indented));
         }
 
-        Console.Error.WriteLine("usage: artemis finding show FINDING_ID");
+        Console.Error.WriteLine("error: unknown finding subcommand '" + args[0] + "'");
+        Console.Error.WriteLine("usage: artemis finding list [--assessment ID] [--status STATUS]");
+        Console.Error.WriteLine("       artemis finding show FINDING_ID");
+        Console.Error.WriteLine("       artemis finding triage FINDING_ID --status STATUS [--note TEXT] [--actor ID]");
         return ExitCodes.UsageError;
+    }
+
+    /// <summary>
+    /// Resolves an operator-supplied finding identifier: a GUID, a full fingerprint hash, or a
+    /// fingerprint prefix that matches exactly one stored finding. Ambiguous prefixes are their
+    /// own outcome so a shortened id can never silently address the wrong finding.
+    /// </summary>
+    public static class FindingIdentifier
+    {
+        public sealed record Resolution(Finding? Finding, int PrefixMatchCount);
+
+        public static Resolution Resolve(IReadOnlyList<Finding> findings, string identifier)
+        {
+            if (Guid.TryParse(identifier, out var id))
+            {
+                return new(findings.FirstOrDefault(f => f.FindingId == id), 0);
+            }
+
+            var exact = findings.FirstOrDefault(f =>
+                f.Fingerprint.Hash.Equals(identifier, StringComparison.OrdinalIgnoreCase));
+            if (exact is not null)
+            {
+                return new(exact, 0);
+            }
+
+            var prefixMatches = findings
+                .Where(f => f.Fingerprint.Hash.StartsWith(identifier, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            return new(prefixMatches.Count == 1 ? prefixMatches[0] : null, prefixMatches.Count);
+        }
     }
 
     /// <summary>
@@ -158,6 +200,9 @@ public static class FindingCommands
     /// </summary>
     private static async Task<int> TriageAsync(IServiceProvider services, string[] args)
     {
+        var db = services.GetRequiredService<ActDatabase>();
+        await db.InitializeAsync();
+
         Guid? findingId = null;
         FindingStatus? status = null;
         string? note = null;
@@ -165,15 +210,17 @@ public static class FindingCommands
 
         if (args.Length > 0 && !args[0].StartsWith('-'))
         {
-            if (Guid.TryParse(args[0], out var parsed))
+            var all = await db.ListFindingsAsync(null, null, null, 100000);
+            var (resolved, prefixMatches) = FindingIdentifier.Resolve(all, args[0]);
+            if (resolved is null)
             {
-                findingId = parsed;
+                Console.Error.WriteLine(prefixMatches > 1
+                    ? $"error: fingerprint prefix '{args[0]}' matches {prefixMatches} findings; use a longer prefix or the finding id"
+                    : "error: finding not found: " + args[0]);
+                return ExitCodes.RuntimeFailure;
             }
-            else
-            {
-                Console.Error.WriteLine("error: '" + args[0] + "' is not a finding id");
-                return ExitCodes.UsageError;
-            }
+
+            findingId = resolved.FindingId;
         }
 
         for (var i = 1; i < args.Length - 1; i++)
@@ -200,8 +247,6 @@ public static class FindingCommands
             return ExitCodes.UsageError;
         }
 
-        var db = services.GetRequiredService<ActDatabase>();
-        await db.InitializeAsync();
         try
         {
             var (updated, triage) = await db.TriageFindingAsync(
