@@ -31,7 +31,7 @@ public class TlsDiscTests
     {
         public List<string> ResolvedHosts { get; } = [];
 
-        public Task<IReadOnlyList<IPAddress>> ResolveVerifiedAsync(string host, CancellationToken cancellationToken)
+        public Task<IReadOnlyList<IPAddress>> ResolveVerifiedAsync(string host, int port, CancellationToken cancellationToken)
         {
             ResolvedHosts.Add(host);
             IReadOnlyList<IPAddress> addresses = [IPAddress.Loopback];

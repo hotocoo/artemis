@@ -225,9 +225,9 @@ public sealed class ScopeValidator : IScopeValidator, IDnsGate
         }
     }
 
-    public async Task<IReadOnlyList<IPAddress>> ResolveVerifiedAsync(string host, CancellationToken cancellationToken)
+    public async Task<IReadOnlyList<IPAddress>> ResolveVerifiedAsync(string host, int port, CancellationToken cancellationToken)
     {
-        var verdict = await EvaluateResolvedAsync(host, 80, cancellationToken);
+        var verdict = await EvaluateResolvedAsync(host, port, cancellationToken);
         if (!verdict.Allowed)
         {
             throw ActException.FailClosed(ErrorCategory.Scope, verdict.SafeMessage, verdict.DiagnosticDetail);
@@ -247,6 +247,6 @@ public sealed class ScopeValidator : IScopeValidator, IDnsGate
 /// <summary>Resolves and authorizes hosts before any socket connects; supplies pinned addresses.</summary>
 public interface IDnsGate
 {
-    /// <summary>Throws ActException unless the host resolves entirely inside scope.</summary>
-    Task<IReadOnlyList<IPAddress>> ResolveVerifiedAsync(string host, CancellationToken cancellationToken);
+    /// <summary>Throws ActException unless the host:port resolves entirely inside scope.</summary>
+    Task<IReadOnlyList<IPAddress>> ResolveVerifiedAsync(string host, int port, CancellationToken cancellationToken);
 }

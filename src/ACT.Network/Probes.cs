@@ -51,7 +51,7 @@ public sealed class TcpServiceProbe(IScopeValidator scopeValidator, IDnsGate dns
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
         // Authorization first; nothing leaves this machine otherwise.
-        var resolved = await dnsGate.ResolveVerifiedAsync(host, cancellationToken);
+        var resolved = await dnsGate.ResolveVerifiedAsync(host, port, cancellationToken);
         var verdict = scopeValidator.Evaluate(new TargetCandidate(host, port, ProtocolFor(port), null));
         if (!verdict.Allowed)
         {
@@ -166,7 +166,7 @@ public sealed class TlsHandshakeProbe(IScopeValidator scopeValidator, IDnsGate d
         {
             throw ActException.FailClosed(ErrorCategory.Scope, verdict.SafeMessage, verdict.DiagnosticDetail);
         }
-        var verified = await dnsGate.ResolveVerifiedAsync(host, cancellationToken);
+        var verified = await dnsGate.ResolveVerifiedAsync(host, port, cancellationToken);
         var address = verified[0];
 
         var errors = new List<string>();
@@ -232,7 +232,7 @@ public sealed class TlsHandshakeProbe(IScopeValidator scopeValidator, IDnsGate d
     {
         try
         {
-            var verified = await dnsGate.ResolveVerifiedAsync(host, cancellationToken);
+            var verified = await dnsGate.ResolveVerifiedAsync(host, port, cancellationToken);
             var address = verified[0];
             using var tcp = new TcpClient(address.AddressFamily);
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

@@ -57,7 +57,7 @@ public sealed class SafeHttpEngine : ISafeHttpEngine
     /// <summary>Connects only to addresses the DNS gate verified for this assessment.</summary>
     private async ValueTask<Stream> PinToVerifiedAddressAsync(SocketsHttpConnectionContext context, CancellationToken cancellationToken)
     {
-        var verified = await _dnsGate.ResolveVerifiedAsync(context.DnsEndPoint.Host, cancellationToken);
+        var verified = await _dnsGate.ResolveVerifiedAsync(context.DnsEndPoint.Host, context.DnsEndPoint.Port, cancellationToken);
 
         Exception? lastError = null;
         foreach (var address in verified)

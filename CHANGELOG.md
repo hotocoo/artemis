@@ -12,8 +12,14 @@ a version bump commits to; the product version itself lives once in
 
 ### Added
 
+- **Bounded endpoint discovery for web-surface checks.** Header checks now discover a bounded set
+  of same-origin paths from the landing page (href/src/action attributes, capped at 12) and probe
+  each, so path-specific defects (permissive CORS on /api, missing HSTS on /login, insecure cookies
+  on /session) are reported instead of only the root response. Out-of-scope or failing paths are
+  skipped without aborting the check. This also fixed a latent DNS-gate bug: `ResolveVerifiedAsync`
+  hardcoded port 80, so any non-default-port target failed closed on the first connect.
 - **Playwright-driven e2e chaos workflow (e2e/).** Real built binaries (CLI, console, lab) on real
-  loopback ports driven through a hostile operator lifecycle - 89 checks across 20 phases:
+  loopback ports driven through a hostile operator lifecycle - 90 checks across 20 phases:
   happy-path assessment, fail-closed malformed scopes, out-of-scope redirects, emergency stops armed
   mid-flight from BOTH the CLI and the console, triage lifecycle through the rendered UI, concurrent
   assessments, baselines, all five report formats, audit-chain verification AND tamper detection,
