@@ -99,6 +99,19 @@ export async function startConsole(dbPath, { openBrowser = false } = {}) {
   };
 }
 
+// True when the process has exited (or was never alive). Some runtimes (dotnet) exit without
+// Node populating exitCode, so we probe liveness directly instead of trusting that field.
+export function procDead(proc) {
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return true;
+  if (proc.pid == null) return true;
+  try {
+    process.kill(proc.pid, 0); // signal 0: existence check, no signal sent
+    return false; // alive
+  } catch (e) {
+    return e.code === 'ESRCH'; // no such process -> dead
+  }
+}
+
 export function killTree(proc) {
   if (!proc || proc.exitCode !== null) return;
   try {
