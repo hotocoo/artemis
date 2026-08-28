@@ -13,12 +13,15 @@ a version bump commits to; the product version itself lives once in
 ### Added
 
 - **Playwright-driven e2e chaos workflow (e2e/).** Real built binaries (CLI, console, lab) on real
-  loopback ports driven through a hostile operator lifecycle: happy-path assessment, fail-closed
-  malformed scopes, out-of-scope redirects, emergency stops armed mid-flight from BOTH the CLI and
-  the console, triage lifecycle through the rendered UI, concurrent assessments, baselines, all five
-  report formats, audit-chain verification, persistence across console restart, and crash-recovery
-  of stranded assessment rows. `bash e2e/run.sh` builds, installs Chromium, and runs the whole
-  workflow with per-check results and screenshots.
+  loopback ports driven through a hostile operator lifecycle - 89 checks across 20 phases:
+  happy-path assessment, fail-closed malformed scopes, out-of-scope redirects, emergency stops armed
+  mid-flight from BOTH the CLI and the console, triage lifecycle through the rendered UI, concurrent
+  assessments, baselines, all five report formats, audit-chain verification AND tamper detection,
+  persistence across console restart, SIGKILL crash-recovery of stranded rows, port-conflict safety,
+  honest empty-database states, authorization-fixture violations with regression capture/replay,
+  HTTPS/TLS assessments against a self-signed origin, and scheduled-execution ticks. `bash
+  e2e/run.sh` builds, installs Chromium, and runs the whole workflow with per-check results and
+  screenshots; a CI job runs it on every push.
 - **Crash recovery for stranded assessment rows.** A hard crash (kill -9, power loss) used to leave
   an assessment row in a non-terminal state forever, so surfaces would describe a run that is
   neither alive nor dead. Every host start now reconciles rows whose stored scope's MaxRuntime plus

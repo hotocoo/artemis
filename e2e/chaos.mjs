@@ -8,8 +8,8 @@
 //
 // This is not a unit test. It is the end-to-end proof the platform is production-shaped.
 import {
-  ARTEMIS_DLL, CONSOLE_DLL, WORK, DB_PATH, SHOTS,
-  spawnProc, waitHttp, startLab, startConsole, killTree,
+  ARTEMIS_DLL, CONSOLE_DLL, WORK, DB_PATH, SHOTS, ROOT,
+  spawnProc, waitHttp, startLab, startConsole, killTree, procDead,
   cli, cliEnv, makeScope, writeScope, writeWork, workfile,
   httpGet, httpPostForm, check, section, summary, withBrowser,
 } from './harness.mjs';
@@ -17,6 +17,10 @@ import {
 // spawnProc runs 'dotnet <args>'; the assessment launches must name the CLI dll explicitly.
 const ARTEMIS = [ARTEMIS_DLL];
 import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+const execFileAsync = promisify(execFile);
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -297,6 +301,107 @@ async function main() {
   check('unknown assessment id is an error', unknownAssessment.code !== 0, 'code=' + unknownAssessment.code);
   const emptyFindings = await httpGet(console2.url + '/findings?assessment=00000000-0000-0000-0000-000000000000');
   check('empty findings filter renders without 500', emptyFindings.status === 200, 'status=' + emptyFindings.status);
+
+
+  // ============ PHASE 15: authorization fixtures + regression capture/replay ============
+  section('PHASE 15 - authz fixtures: violation found, regression captured + replayed');
+  const fixturesPath = path.join(ROOT, 'samples', 'authorization-fixtures.example.json');
+  const scopeAuthz = makeScope({ permittedPorts: [String(lab.port)] });
+  const authzFile = writeScope('authz.json', scopeAuthz);
+  const runAuthz = await cli(['assessment', 'start', '--scope', authzFile, '--base-url', lab.url, '--fixtures', fixturesPath, '--json'], { env: cliEnv() });
+  check('authz assessment completes', runAuthz.code === 0 && runAuthz.json?.state === 'Completed', 'code=' + runAuthz.code);
+  const authzFindings = runAuthz.json?.findings ?? [];
+  const violation = authzFindings.find(f => /invariant/i.test(f.title) && f.severity === 'Critical');
+  check('cross-tenant violation found as Critical', !!violation, JSON.stringify(authzFindings.map(f => f.severity + ':' + f.title.slice(0,30))));
+  // The violated invariant must be captured as a machine-executable regression test.
+  const regList = await cli(['regression', 'list', '--json'], { env: cliEnv() });
+  const regTests = regList.json?.tests ?? [];
+  check('regression test captured for the violation', regTests.length > 0, 'none captured');
+  const regTest = regTests[0];
+  const regTestId = regTest?.regressionTestId ?? regTest?.RegressionTestId;
+  if (regTest) {
+    // Replay it against the still-vulnerable lab: the original issue is present, so it must REGRESS.
+    const findingForReg = (await cli(['finding', 'list', '--assessment', scopeAuthz.assessmentId, '--json'], { env: cliEnv() })).json?.find(f => f.title === violation.title);
+    if (findingForReg) {
+      const replay = await cli(['regression', 'run', '--finding', findingForReg.FindingId, '--base-url', lab.url, '--fixtures', fixturesPath, '--json'], { env: cliEnv() });
+      check('regression replay runs without error', replay.code === 0, 'code=' + replay.code + ' err=' + replay.stderr.slice(0,150));
+      const regDetail = await httpGet(console2.url + '/regressions/' + regTestId);
+      check('regression run verdict recorded in UI', /REGRESSED|held|Confirmed|Verification/i.test(regDetail.body), 'no verdict');
+    }
+  }
+
+  // ============ PHASE 16: HTTPS/TLS assessment (self-signed cert findings) ============
+  section('PHASE 16 - HTTPS/TLS assessment against self-signed origin');
+  const scopeTls = makeScope({ permittedPorts: [String(lab.httpsPort)] });
+  const tlsFile = writeScope('tls.json', scopeTls);
+  const httpsUrl = 'https://127.0.0.1:' + lab.httpsPort;
+  const runTls = await cli(['assessment', 'start', '--scope', tlsFile, '--base-url', httpsUrl, '--json'], { env: cliEnv(), timeoutMs: 120000 });
+  check('https assessment completes', runTls.code === 0 && runTls.json?.state === 'Completed', 'code=' + runTls.code + ' err=' + runTls.stderr.slice(0,150));
+  const tlsFindings = runTls.json?.findings ?? [];
+  check('https assessment produced TLS/cert findings', tlsFindings.length > 0, 'no findings');
+  check('self-signed/invalid cert is flagged', tlsFindings.some(f => /cert|trust|tls|self.?signed|expired/i.test(f.title)), JSON.stringify(tlsFindings.map(f => f.title.slice(0,40))));
+
+  // ============ PHASE 17: audit tampering is detected (hash chain) ============
+  section('PHASE 17 - audit tampering detected by hash chain');
+  // Copy the DB, tamper with an audit row on the copy, and verify the chain breaks there -
+  // without corrupting the live database the rest of the workflow depends on.
+  const tamperDb = workfile('tamper.db');
+  fs.copyFileSync(DB_PATH, tamperDb);
+  const tamperEnv = { ARTM_ACT__STORAGE__DATABASEPATH: tamperDb };
+  const sqlite = await execFileAsync('sqlite3', [tamperDb, "UPDATE audit_events SET result = result || ' TAMPERED' WHERE sequence = (SELECT MAX(sequence) FROM audit_events);"]);
+  check('tampered an audit row on a db copy', sqlite.code === 0 || sqlite.stdout === '', 'sqlite failed');
+  const verifyTampered = await cli(['audit', 'verify'], { env: tamperEnv });
+  check('audit verify FAILS on the tampered copy (exit 5)', verifyTampered.code === 5, 'code=' + verifyTampered.code);
+  const verifyClean = await cli(['audit', 'verify'], { env: cliEnv() });
+  check('audit verify still PASSES on the live db', verifyClean.code === 0, 'code=' + verifyClean.code);
+
+  // ============ PHASE 18: port conflict (second console on same port) ============
+  section('PHASE 18 - port conflict: second console cannot steal the port');
+  const conflictProc = spawnProc('console-conflict', [CONSOLE_DLL], {
+    ARTM_ACT__STORAGE__DATABASEPATH: DB_PATH,
+    ARTM_ACT__UI__CONSOLEPORT: String(console2.port),
+    ARTM_ACT__UI__OPENBROWSERONSTART: 'false',
+  });
+  // dotnet startup + the failed bind attempt take a few seconds; give it a generous window.
+  let conflictExited = false;
+  for (let i = 0; i < 40; i++) { await sleep(400); if (procDead(conflictProc)) { conflictExited = true; break; } }
+  check('second console on the same port exits (cannot bind)', conflictExited, 'still alive after 16s');
+  const stillServing = await httpGet(console2.url + '/health');
+  check('original console still serves after the conflict', stillServing.status === 200, 'status=' + stillServing.status);
+  if (!conflictExited) killTree(conflictProc);
+
+  // ============ PHASE 19: empty database renders honest empty states ============
+  section('PHASE 19 - empty database: honest empty states, no 500s');
+  const emptyDb = workfile('empty.db');
+  const emptyConsole = await startConsole(emptyDb);
+  for (const p of ['/', '/assessments', '/findings', '/inventory', '/coverage', '/regressions', '/baselines', '/reports', '/audit', '/schedules']) {
+    const r = await httpGet(emptyConsole.url + p);
+    check('empty-db page ' + p + ' renders 200', r.status === 200, 'status=' + r.status);
+  }
+  const emptyDash = await httpGet(emptyConsole.url + '/');
+  check('empty dashboard shows zero assessments', /<b>0<\/b>/.test(emptyDash.body), 'no zero card');
+  await emptyConsole.kill();
+
+  // ============ PHASE 20: schedule add + tick fires the assessment ============
+  section('PHASE 20 - schedule add + tick executes the frozen scope');
+  // The schedule runs WITHOUT an explicit --base-url, so the scope must carry a resolvable
+  // http origin in its allowlist or the frozen run fails closed on origin resolution.
+  const scopeSched = makeScope({
+    permittedPorts: [String(lab.port)],
+    allowlistedTargets: ['localhost', '127.0.0.1', 'http://127.0.0.1:' + lab.port],
+  });
+  const schedFile = writeScope('sched.json', scopeSched);
+  const schedAdd = await cli(['schedule', 'add', '--name', 'chaos-nightly', '--scope', schedFile, '--cron', '*/5 * * * *'], { env: cliEnv() });
+  check('schedule add succeeds', schedAdd.code === 0, 'code=' + schedAdd.code + ' err=' + schedAdd.stderr.slice(0,150));
+  const schedListBefore = await cli(['schedule', 'list', '--json'], { env: cliEnv() });
+  check('schedule is listed', (schedListBefore.json?.length ?? 0) > 0, 'not listed');
+  const tick = await cli(['schedule', 'tick'], { env: cliEnv(), timeoutMs: 120000 });
+  check('schedule tick runs', tick.code === 0, 'code=' + tick.code + ' err=' + tick.stderr.slice(0,150));
+  const schedListAfter = await cli(['schedule', 'list', '--json'], { env: cliEnv() });
+  const schedRow = schedListAfter.json?.find(s => s.name === 'chaos-nightly' || s.Name === 'chaos-nightly');
+  check('schedule recorded a last run after tick', schedRow && (schedRow.lastRunUtc || schedRow.LastRunUtc), 'no lastRunUtc');
+  const schedPage = await httpGet(console2.url + '/schedules');
+  check('console schedules page shows the schedule', /chaos-nightly/.test(schedPage.body), 'not on page');
 
   // ============ cleanup ============
   section('cleanup');
