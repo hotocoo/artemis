@@ -71,7 +71,8 @@ public sealed class ServiceDiscoveryCheck : ISecurityCheck
 
         // Defense in depth: authorize the resolved host before iterating ports. Each probe
         // re-validates host+port internally and fails closed on any drift.
-        _ = await _services.Gate.ResolveVerifiedAsync(host, cancellationToken).ConfigureAwait(false);
+        var precheckPort = scope.PermittedPorts.FirstOrDefault()?.First ?? 80;
+        _ = await _services.Gate.ResolveVerifiedAsync(host, precheckPort, cancellationToken).ConfigureAwait(false);
 
         var findings = new List<Finding>();
         var evidence = new List<EvidenceItem>();

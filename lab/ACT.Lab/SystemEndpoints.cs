@@ -67,6 +67,18 @@ public static class SystemEndpoints
             <h1>ARTEMIS TEST LAB</h1>
             <p>Deliberate vulnerabilities for scanner verification. LOOPBACK ONLY. NEVER EXPOSE.</p>
             <p><a href="/fixtures">Fixture catalog</a> &#183; <a href="/healthz">Health</a></p>
+            <nav aria-label="Fixtures">
+              <a href="/headers/missing">Missing headers</a> &#183;
+              <a href="/cookies/bad">Insecure cookie</a> &#183;
+              <a href="/cors/open">Open CORS</a> &#183;
+              <a href="/redirect/out">Outbound redirect</a> &#183;
+              <a href="/authz/items/alpha-1">Object authorization</a> &#183;
+              <a href="/api/openapi.json">OpenAPI surface</a> &#183;
+              <a href="/traversal/read">Path traversal</a> &#183;
+              <a href="/sql/search">SQL data flow</a> &#183;
+              <a href="/cmd/ping">Command injection</a> &#183;
+              <a href="/secrets/page">Secret fixtures</a>
+            </nav>
           </body>
         </html>
         """;

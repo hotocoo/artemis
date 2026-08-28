@@ -52,6 +52,10 @@ async function main() {
   // The real launch path assesses the origin (root + OpenAPI + TLS handshake), not a crawler,
   // so we assert honest non-empty findings rather than a guaranteed severity mix.
   check('findings carry honest severities', findings1.every(f => ['Critical','High','Medium','Low','Informational'].includes(f.severity)), JSON.stringify(findings1.map(f => f.severity)));
+  // Multi-path probing: the scanner discovers same-origin paths from the landing page and probes
+  // them, so path-specific defects (CORS on /cors/open, cookies on /cookies/bad) are found.
+  const distinctPaths = new Set(findings1.map(f => f.target));
+  check('multi-path probing found findings on multiple paths', distinctPaths.size > 1, 'paths=' + distinctPaths.size);
   const assessmentId1 = run1.json?.assessmentId;
 
   // Verify the same facts through the CLI read surface.

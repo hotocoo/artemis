@@ -12,14 +12,22 @@ namespace ACT.Web.Checks;
 /// </summary>
 public abstract class HttpHeaderCheckBase : ISecurityCheck
 {
-    private static readonly ConditionalWeakTable<SecurityCheckContext, ResponseSlot> ResponseCache = new();
+    private static readonly ConditionalWeakTable<SecurityCheckContext, ResponseCacheEntry> ResponseCache = new();
 
     /// <inheritdoc />
     public abstract SecurityCheckMetadata Metadata { get; }
 
     /// <summary>
-    /// Runs the check: validates applicability preconditions, fetches (or reuses) the target
-    /// response once, then delegates analysis to the derived class.
+    /// Maximum number of same-origin paths (including the root) probed per target. Bounded so a
+    /// chatty landing page can never exhaust the request budget or turn a header check into a crawler.
+    /// </summary>
+    protected const int MaxProbePaths = 12;
+
+    /// <summary>
+    /// Runs the check: validates applicability preconditions, discovers a bounded set of same-origin
+    /// paths from the landing page, fetches (or reuses) each response, then delegates analysis to the
+    /// derived class for every probed URL. Findings and evidence from all paths are combined so a
+    /// path-specific defect (e.g. permissive CORS on /api, missing HSTS on /login) is reported.
     /// </summary>
     public virtual async Task<SecurityCheckResult> ExecuteAsync(SecurityCheckContext context, CancellationToken cancellationToken)
     {
@@ -29,8 +37,119 @@ public abstract class HttpHeaderCheckBase : ISecurityCheck
             return SkipNotApplicable(startedUtc);
         }
 
-        var response = await FetchAsync(context, baseUrl, cancellationToken).ConfigureAwait(false);
-        return await AnalyzeAsync(context, baseUrl, response, startedUtc, cancellationToken).ConfigureAwait(false);
+        var probeUrls = await DiscoverProbeUrlsAsync(context, baseUrl, cancellationToken).ConfigureAwait(false);
+
+        var findings = new List<Finding>();
+        var evidence = new List<EvidenceItem>();
+        long requestCount = 0;
+        var targetsExamined = 0;
+        var allCompleted = true;
+
+        foreach (var url in probeUrls)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            SafeHttpResponse response;
+            try
+            {
+                response = await FetchAsync(context, url, cancellationToken).ConfigureAwait(false);
+            }
+            catch (ActException)
+            {
+                // A path may fail closed (e.g. an out-of-scope redirect). Skip it and keep probing.
+                allCompleted = false;
+                continue;
+            }
+            var result = await AnalyzeAsync(context, url, response, startedUtc, cancellationToken).ConfigureAwait(false);
+            findings.AddRange(result.Findings);
+            evidence.AddRange(result.StandaloneEvidence);
+            requestCount += result.RequestCount;
+            targetsExamined += result.TargetsExamined;
+            if (result.Status is not (CheckExecutionStatus.Completed or CheckExecutionStatus.CompletedWithWarnings))
+            {
+                allCompleted = false;
+            }
+        }
+
+        return new SecurityCheckResult(
+            Metadata.Id,
+            allCompleted ? CheckExecutionStatus.Completed : CheckExecutionStatus.CompletedWithWarnings,
+            startedUtc,
+            DateTimeOffset.UtcNow,
+            findings,
+            evidence,
+            FailureSummarySafe: null,
+            RequestCount: requestCount,
+            TargetsExamined: targetsExamined);
+    }
+
+    /// <summary>
+    /// Discovers a bounded set of same-origin probe paths from the landing page. Always includes the
+    /// base URL itself. Extracts candidate paths from href/src/action attributes, filters to
+    /// same-origin relative or absolute paths, deduplicates, and caps at MaxProbePaths.
+    /// </summary>
+    protected virtual async Task<IReadOnlyList<Uri>> DiscoverProbeUrlsAsync(
+        SecurityCheckContext context, Uri baseUrl, CancellationToken cancellationToken)
+    {
+        var urls = new List<Uri> { baseUrl };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        seen.Add(baseUrl.AbsolutePath);
+
+        try
+        {
+            var rootResponse = await FetchAsync(context, baseUrl, cancellationToken).ConfigureAwait(false);
+            var html = rootResponse.BodyAsText();
+
+            foreach (var candidate in ExtractPathCandidates(html))
+            {
+                if (urls.Count >= MaxProbePaths) break;
+
+                Uri? probeUrl = null;
+                if (candidate.StartsWith("/", StringComparison.Ordinal) && !candidate.StartsWith("//"))
+                {
+                    probeUrl = new Uri(baseUrl, candidate);
+                }
+                else if (Uri.TryCreate(candidate, UriKind.Absolute, out var abs) &&
+                         IsWebScheme(abs.Scheme) && abs.Host.Equals(baseUrl.Host, StringComparison.OrdinalIgnoreCase) &&
+                         abs.Port == baseUrl.Port)
+                {
+                    probeUrl = abs;
+                }
+
+                if (probeUrl is not null && seen.Add(probeUrl.AbsolutePath))
+                {
+                    urls.Add(probeUrl);
+                }
+            }
+        }
+        catch (ActException)
+        {
+            // Scope or transport failure on discovery: fall back to probing only the root.
+        }
+
+        return urls;
+    }
+
+    /// <summary>
+    /// Extracts candidate path strings from HTML href/src/action attributes using a bounded regex.
+    /// Never throws; returns an empty list on any parse issue.
+    /// </summary>
+    private static IEnumerable<string> ExtractPathCandidates(string html)
+    {
+        if (string.IsNullOrWhiteSpace(html)) yield break;
+
+        var matches = System.Text.RegularExpressions.Regex.Matches(
+            html,
+            @"(?:href|src|action)\s*=\s*[""']([^""'#?]+)[""']",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            var value = match.Groups[1].Value.Trim();
+            if (value.Length > 0 && value.Length <= 500)
+            {
+                yield return value;
+            }
+        }
     }
 
     /// <summary>Analyzes the fetched response and produces the check result.</summary>
@@ -52,16 +171,15 @@ public abstract class HttpHeaderCheckBase : ISecurityCheck
     protected virtual async Task<SafeHttpResponse> FetchAsync(
         SecurityCheckContext context, Uri url, CancellationToken cancellationToken)
     {
-        var slot = ResponseCache.GetOrCreateValue(context);
-        if (slot.Response is { } cached && slot.Url is { } cachedUrl && cachedUrl.Equals(url))
+        var entry = ResponseCache.GetOrCreateValue(context);
+        if (entry.Responses.TryGetValue(url, out var cached))
         {
             return cached;
         }
 
         var response = await context.Assessment.Http
             .SendAsync(SafeHttpRequest.Get(url, CorrelationId.New()), cancellationToken).ConfigureAwait(false);
-        slot.Url = url;
-        slot.Response = response;
+        entry.Responses[url] = response;
         return response;
     }
 
@@ -206,10 +324,9 @@ public abstract class HttpHeaderCheckBase : ISecurityCheck
         _ => BusinessImpactLevel.Negligible
     };
 
-    /// <summary>Per-context holder enabling response reuse across derived analyses.</summary>
-    private sealed class ResponseSlot
+    /// <summary>Per-context holder enabling response reuse across derived analyses and probe paths.</summary>
+    private sealed class ResponseCacheEntry
     {
-        public Uri? Url;
-        public SafeHttpResponse? Response;
+        public readonly System.Collections.Concurrent.ConcurrentDictionary<Uri, SafeHttpResponse> Responses = new();
     }
 }
