@@ -8,6 +8,25 @@ The typed contracts in `src/ACT.Contracts` are the public API surface whose stab
 a version bump commits to; the product version itself lives once in
 `Directory.Build.props` and flows to the CLI, reports, and this file from there.
 
+## [0.1.4] - 2026-08-29
+
+### Added
+
+- **C/C++ source analysis.** Artemis now detects native-code vulnerabilities: buffer-unsafe
+  string/I-O functions (strcpy, strcat, sprintf), weak crypto primitives (MD5_Init, SHA1_Init,
+  DES_set_key), and hard-coded secrets in C/C++ files. C++ projects (`.cpp`, `.cc`, `.h`, `.hpp`,
+  `.c`) are now classified and scanned instead of skipped as Unknown.
+
+### Fixed
+
+- **Build and tool directories excluded from source scans.** CMake `build-*` trees, `_deps`,
+  `.claude`/`.serena`/`.codegraph` worktrees, and other generated-output directories are now
+  ignored, eliminating false positives from third-party build artifacts (previously a C++ repo
+  scanned 2752 files, 2694 of them build output; now only first-party source is examined).
+- **FindingDeduplicator is now thread-safe.** Parallel check execution could race on the shared
+  deduplication dictionary, occasionally producing a FOREIGN KEY constraint failure when evidence
+  referenced a finding not yet persisted. The merge/snapshot/contains paths are now gated by a lock.
+
 ## [0.1.3] - 2026-08-29
 
 ### Added
