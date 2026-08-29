@@ -8,7 +8,7 @@ The typed contracts in `src/ACT.Contracts` are the public API surface whose stab
 a version bump commits to; the product version itself lives once in
 `Directory.Build.props` and flows to the CLI, reports, and this file from there.
 
-## [Unreleased]
+## [0.1.3] - 2026-08-29
 
 ### Added
 
