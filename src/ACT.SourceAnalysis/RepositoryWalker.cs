@@ -15,8 +15,22 @@ public sealed class RepositoryWalker
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             ".git", ".hg", ".svn", "node_modules", "bin", "obj",
-            "dist", "build", "target", ".venv", "__pycache__", "out"
+            "dist", "build", "target", ".venv", "__pycache__", "out",
+            "_deps", ".build", "bazel-out", "bazel-bin", "bazel-genfiles",
+            "cmake-build", "cmake-build-*", "vendor", ".next", ".nuxt",
+            ".claude", ".serena", ".codegraph", ".ruff_cache"
         };
+
+    /// <summary>Directory-name prefixes that mark generated/build output (e.g. CMake build-* trees).</summary>
+    private static readonly string[] IgnoredDirectoryPrefixes =
+    [
+        "build-", "cmake-build-"
+    ];
+
+    /// <summary>True when a directory name is a known build/VCS/dependency artifact directory.</summary>
+    public static bool IsIgnoredDirectoryName(string name) =>
+        IgnoredDirectoryNames.Contains(name)
+        || IgnoredDirectoryPrefixes.Any(prefix => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Creates a walker; the root must exist and the limits must be positive or the call fails closed.</summary>
     public RepositoryWalker(string rootPath, RepositoryAnalysisLimits? limits = null)
@@ -96,7 +110,7 @@ public sealed class RepositoryWalker
 
                 if (child is DirectoryInfo directoryInfo)
                 {
-                    if (IgnoredDirectoryNames.Contains(directoryInfo.Name))
+                    if (IsIgnoredDirectoryName(directoryInfo.Name))
                     {
                         Counters.IncrementIgnoredDirectories();
                         continue;
