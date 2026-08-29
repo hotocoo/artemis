@@ -861,3 +861,48 @@ public class SrcDepCheckTests
         Assert.Equal(1, result.TargetsExamined);
     }
 }
+
+public class SrcDepBuildDirAndCppTests
+{
+    [Fact]
+    public async Task Walk_SkipsBuildVariantsAndToolDirs()
+    {
+        using var root = new SrcDepTempDir();
+        root.Write("src/main.cpp", "int main() { return 0; }");
+        root.Write("build-release/out.o", "BINARY");
+        root.Write("build-win-ship/_deps/lib.cpp", "int x;");
+        root.Write("build-audit/log.txt", "log");
+        root.Write(".claude/worktrees/agent/src/main.cpp", "int main() {}");
+        root.Write("cmake-build-debug/CMakeCache.txt", "cache");
+
+        var walker = new RepositoryWalker(root.Path);
+        var entries = await SrcDepHarness.CollectAsync(walker);
+
+        var discovered = entries.OfType<DiscoveredFile>().Select(static e => e.File.RelativePath).ToList();
+        Assert.Equal(["src/main.cpp"], discovered);
+    }
+
+    [Fact]
+    public void Detect_CppExtensions()
+    {
+        Assert.Equal(SourceLanguage.Cpp, SourceLanguageDetector.Detect("main.cpp"));
+        Assert.Equal(SourceLanguage.Cpp, SourceLanguageDetector.Detect("main.cc"));
+        Assert.Equal(SourceLanguage.Cpp, SourceLanguageDetector.Detect("main.hpp"));
+        Assert.Equal(SourceLanguage.Cpp, SourceLanguageDetector.Detect("main.h"));
+        Assert.Equal(SourceLanguage.Cpp, SourceLanguageDetector.Detect("main.c"));
+    }
+
+    [Fact]
+    public async Task CppUnsafeFunctionRule_DetectsStrcpy()
+    {
+        using var root = new SrcDepTempDir();
+        root.Write("src/vuln.cpp", "void f(char* d, char* s) { strcpy(d, s); }");
+
+        var evidence = new SrcDepRecordingEvidenceFactory();
+        var engine = new SourceRuleEngine();
+        var check = new SourceAnalysisCheck(evidence, engine);
+
+        var result = await check.ExecuteAsync(SrcDepHarness.CreateContext(root.Path, evidence), CancellationToken.None);
+        Assert.Contains(result.Findings, f => f.CheckId.Value == SourceAnalysisCheck.CheckIdValue && f.Title.Contains("Buffer-unsafe"));
+    }
+}

@@ -115,32 +115,51 @@ public sealed record ExclusionDecision(string CheckId, string ReasonCode, string
 public sealed class FindingDeduplicator
 {
     private readonly Dictionary<string, Finding> _byFingerprint = new(StringComparer.Ordinal);
+    private readonly object _gate = new();
 
     public FindingDeduplicator(IEnumerable<Finding>? preexisting = null)
     {
         if (preexisting is null) return;
-        foreach (var finding in preexisting)
+        lock (_gate)
         {
-            _byFingerprint[finding.Fingerprint.Hash] = finding;
+            foreach (var finding in preexisting)
+            {
+                _byFingerprint[finding.Fingerprint.Hash] = finding;
+            }
         }
     }
 
-    /// <summary>Merges an incoming finding into the known set. Returns null when it only refreshes history.</summary>
+    /// <summary>Merges an incoming finding into the known set. Thread-safe for parallel check execution.</summary>
     public MergeOutcome Merge(Finding incoming)
     {
-        if (_byFingerprint.TryGetValue(incoming.Fingerprint.Hash, out var existing))
+        lock (_gate)
         {
-            var refreshed = FindingFactory.WithReobservation(existing, incoming.LastSeenUtc);
-            _byFingerprint[existing.Fingerprint.Hash] = refreshed;
-            return new MergeOutcome(refreshed, WasDuplicate: true);
+            if (_byFingerprint.TryGetValue(incoming.Fingerprint.Hash, out var existing))
+            {
+                var refreshed = FindingFactory.WithReobservation(existing, incoming.LastSeenUtc);
+                _byFingerprint[existing.Fingerprint.Hash] = refreshed;
+                return new MergeOutcome(refreshed, WasDuplicate: true);
+            }
+            _byFingerprint[incoming.Fingerprint.Hash] = incoming;
+            return new MergeOutcome(incoming, WasDuplicate: false);
         }
-        _byFingerprint[incoming.Fingerprint.Hash] = incoming;
-        return new MergeOutcome(incoming, WasDuplicate: false);
     }
 
-    public IReadOnlyCollection<Finding> Snapshot() => [.. _byFingerprint.Values];
+    public IReadOnlyCollection<Finding> Snapshot()
+    {
+        lock (_gate)
+        {
+            return [.. _byFingerprint.Values];
+        }
+    }
 
-    public bool Contains(string fingerprintHash) => _byFingerprint.ContainsKey(fingerprintHash);
+    public bool Contains(string fingerprintHash)
+    {
+        lock (_gate)
+        {
+            return _byFingerprint.ContainsKey(fingerprintHash);
+        }
+    }
 }
 
 /// <summary>Result of merging one finding.</summary>
