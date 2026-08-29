@@ -10,6 +10,10 @@ a version bump commits to; the product version itself lives once in
 
 ## [Unreleased]
 
+_No changes yet._
+
+## [1.2.0] - 2026-08-29
+
 ### Added
 
 - **Bounded endpoint discovery for web-surface checks.** Header checks now discover a bounded set
@@ -91,6 +95,17 @@ a version bump commits to; the product version itself lives once in
   against production api.osv.dev.
 - **Re-marking a prohibited port accumulated duplicate entries.** Prohibition now supersedes ANY
   prior entry for the port/protocol, not just Expected ones.
+
+### Production verification
+
+- **Release 1.2.0 verified production-live.** Full verification matrix executed against the real
+  built binaries: Release build clean (0 warnings, 0 errors), 337 unit tests, 24 integration tests
+  (real loopback lab fixtures), 17 safety tests (fail-closed invariants), and the 90-check Playwright
+  e2e chaos workflow across 20 phases - hostile operator lifecycle, mid-flight emergency stops from
+  both CLI and console, SIGKILL crash recovery, concurrent runs, audit-chain tamper detection,
+  self-signed TLS, scheduled execution, and persistence across restarts - all passing. Self-contained
+  single-file artifacts published for win-x64, osx-arm64, osx-x64, linux-x64, and linux-arm64 with
+  in-place SHA256SUMS verification, CycloneDX SBOMs, and native execution of the shipped binaries.
 
 ## [1.1.1] - 2026-08-26
 
