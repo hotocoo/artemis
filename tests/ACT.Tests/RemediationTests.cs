@@ -196,3 +196,201 @@ public sealed class RemediationEngineTests : IDisposable
         DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, FindingStatus.New,
         new FindingFingerprint("cors"), null, null, null);
 }
+
+/// <summary>
+/// Unit coverage for the dependency remediation: upgrading a vulnerable package in a manifest
+/// to the advisory's fixed version across all supported ecosystems.
+/// </summary>
+
+/// <summary>
+/// Unit coverage for the dependency remediation: upgrading a vulnerable package in a manifest
+/// to the advisory's fixed version across all supported ecosystems.
+/// </summary>
+public sealed class DependencyRemediatorTests
+{
+    private static string TempFile(string content)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "artemis-dep-" + Guid.NewGuid().ToString("N") + ".txt");
+        File.WriteAllText(path, content);
+        return path;
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_updates_requirements_txt()
+    {
+        var path = TempFile("requests==2.25.0\nflask==2.0.0\n");
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "requests", "2.31.0", CancellationToken.None);
+            Assert.True(result.Updated);
+            Assert.Equal("2.25.0", result.PreviousVersion);
+            Assert.Equal("2.31.0", result.NewVersion);
+            var content = File.ReadAllText(path);
+            Assert.Contains("requests==2.31.0", content);
+            Assert.Contains("flask==2.0.0", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_updates_package_json()
+    {
+        var path = TempFile("{\n  \"dependencies\": {\n    \"lodash\": \"4.17.15\",\n    \"express\": \"4.18.0\"\n  }\n}\n");
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "lodash", "4.17.21", CancellationToken.None);
+            Assert.True(result.Updated);
+            Assert.Equal("4.17.15", result.PreviousVersion);
+            var content = File.ReadAllText(path);
+            Assert.Contains("\"4.17.21\"", content);
+            Assert.Contains("\"express\": \"4.18.0\"", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_updates_cargo_toml()
+    {
+        var path = TempFile("[dependencies]\nserde = \"1.0.0\"\ntokio = \"1.20.0\"\n");
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "serde", "1.0.190", CancellationToken.None);
+            Assert.True(result.Updated);
+            Assert.Equal("1.0.0", result.PreviousVersion);
+            var content = File.ReadAllText(path);
+            Assert.Contains("serde = \"1.0.190\"", content);
+            Assert.Contains("tokio = \"1.20.0\"", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_updates_csproj()
+    {
+        var path = TempFile("<Project>\n  <ItemGroup>\n    <PackageReference Include=\"Newtonsoft.Json\" Version=\"13.0.1\" />\n  </ItemGroup>\n</Project>\n");
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "Newtonsoft.Json", "13.0.3", CancellationToken.None);
+            Assert.True(result.Updated);
+            Assert.Equal("13.0.1", result.PreviousVersion);
+            var content = File.ReadAllText(path);
+            Assert.Contains("Version=\"13.0.3\"", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_fails_closed_when_package_absent()
+    {
+        var path = TempFile("requests==2.25.0\n");
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "nonexistent", "1.0.0", CancellationToken.None);
+            Assert.False(result.Updated);
+            var content = File.ReadAllText(path);
+            Assert.Equal("requests==2.25.0\n", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}
+
+/// <summary>
+/// Unit coverage for the source remediation: applying rule-specific fixes to source files for
+/// the rules with safe, deterministic transformations.
+/// </summary>
+public sealed class SourceRemediatorTests
+{
+    private static string TempFile(string content)
+    {
+        var path = Path.Combine(Path.GetTempPath(), "artemis-src-" + Guid.NewGuid().ToString("N") + ".txt");
+        File.WriteAllText(path, content);
+        return path;
+    }
+
+    [Fact]
+    public async Task FixAsync_fixes_weak_crypto()
+    {
+        var path = TempFile("var hash = MD5.Create();\nvar h2 = SHA1.Create();\n");
+        try
+        {
+            var result = await SourceRemediator.FixAsync(path, "SRC-CRYPTO-002", CancellationToken.None);
+            Assert.True(result.Updated);
+            Assert.True(result.LocationsFixed >= 2);
+            var content = File.ReadAllText(path);
+            Assert.Contains("SHA256.Create", content);
+            Assert.DoesNotContain("MD5.Create", content);
+            Assert.DoesNotContain("SHA1.Create", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task FixAsync_fixes_tls_validation()
+    {
+        var path = TempFile("requests.get(url, verify=False)\n");
+        try
+        {
+            var result = await SourceRemediator.FixAsync(path, "SRC-TLS-008", CancellationToken.None);
+            Assert.True(result.Updated);
+            var content = File.ReadAllText(path);
+            Assert.Contains("verify=True", content);
+            Assert.DoesNotContain("verify=False", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task FixAsync_fixes_insecure_cookies()
+    {
+        var path = TempFile("response.SetCookie(name, value, Secure = false, HttpOnly = false);\n");
+        try
+        {
+            var result = await SourceRemediator.FixAsync(path, "SRC-COOKIE-010", CancellationToken.None);
+            Assert.True(result.Updated);
+            var content = File.ReadAllText(path);
+            Assert.Contains("Secure = true", content);
+            Assert.Contains("HttpOnly = true", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task FixAsync_reports_guidance_only_for_unfixable_rule()
+    {
+        var path = TempFile("var conn = new SqlConnection(\"password=secret\");\n");
+        try
+        {
+            var result = await SourceRemediator.FixAsync(path, "SRC-SECRET-001", CancellationToken.None);
+            Assert.False(result.Updated);
+            Assert.Contains("no safe automatic fix", result.Detail);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+}
