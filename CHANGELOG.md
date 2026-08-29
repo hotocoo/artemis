@@ -10,7 +10,20 @@ a version bump commits to; the product version itself lives once in
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- **On-the-spot remediation: Artemis now fixes findings, not just reports them.** A new
+  `artemis remediate` command and the `ACT.Remediation` engine close the find-and-fix loop that was
+  the project's biggest capability gap. For each remediable finding (missing/misconfigured HSTS,
+  CSP, and security headers; permissive or reflective CORS; insecure cookies; missing cache-control;
+  plain-HTTP-without-HTTPS-redirect), the engine derives a concrete, machine-applicable plan and
+  applies it through a local remediation proxy that corrects the target's live responses in place -
+  injecting the missing headers, stripping wildcard CORS grants, hardening Set-Cookie attributes,
+  or forcing the HTTP->HTTPS upgrade. Crucially, the fix is then VERIFIED by re-running the
+  originating check: the outcome is only "Remediated" when the re-check against the corrected
+  endpoint no longer reports the finding (e.g. CSP: 2 findings before -> 0 after). `artemis
+  remediate --list` shows which stored findings are remediable. 14 new unit/live-loopback tests
+  cover the planner and the apply-and-verify loop.
 
 ## [1.2.0] - 2026-08-29
 

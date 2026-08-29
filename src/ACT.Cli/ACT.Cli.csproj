@@ -23,5 +23,6 @@
     <ProjectReference Include="../ACT.Persistence/ACT.Persistence.csproj" />
     <ProjectReference Include="../ACT.Reporting/ACT.Reporting.csproj" />
     <ProjectReference Include="../ACT.Llm/ACT.Llm.csproj" />
+    <ProjectReference Include="../ACT.Remediation/ACT.Remediation.csproj" />
   </ItemGroup>
 </Project>
