@@ -14,6 +14,7 @@
     <Project Path="src/ACT.Network/ACT.Network.csproj" />
     <Project Path="src/ACT.Persistence/ACT.Persistence.csproj" />
     <Project Path="src/ACT.Policy/ACT.Policy.csproj" />
+    <Project Path="src/ACT.Remediation/ACT.Remediation.csproj" />
     <Project Path="src/ACT.Reporting/ACT.Reporting.csproj" />
     <Project Path="src/ACT.Risk/ACT.Risk.csproj" />
     <Project Path="src/ACT.Scope/ACT.Scope.csproj" />

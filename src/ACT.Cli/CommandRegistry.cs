@@ -38,6 +38,7 @@ public static class CommandRegistry
         Register("baseline", BaselineCommands.Run);
         Register("report", ReportCommands.Run);
         Register("regression", RegressionCommands.Run);
+        Register("remediate", RemediationCommands.Run);
         Register("feed", FeedCommands.Run);
         Register("schedule", ScheduleCommands.Run);
         Register("retention", RetentionCommands.Run);
@@ -80,6 +81,7 @@ public static class HelpPrinter
         "baseline" => "create security baselines and compare assessments against them",
         "report" => "generate JSON/CSV/Markdown/HTML/SARIF reports",
         "regression" => "list, show and replay stored machine-executable regression tests",
+        "remediate" => "fix a finding on the spot via a remediation proxy and verify the fix",
         "feed" => "refresh advisory feed state (stale data is labeled)",
         "schedule" => "list, add, enable, disable schedules and run due ticks",
         "retention" => "preview and sweep evidence past scope-configured retention windows",
