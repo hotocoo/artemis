@@ -906,3 +906,34 @@ public class SrcDepBuildDirAndCppTests
         Assert.Contains(result.Findings, f => f.CheckId.Value == SourceAnalysisCheck.CheckIdValue && f.Title.Contains("Buffer-unsafe"));
     }
 }
+
+public class SrcDepCppRulesTests
+{
+    [Fact]
+    public async Task CppCommandInjectionRule_DetectsSystemCall()
+    {
+        using var root = new SrcDepTempDir();
+        root.Write("src/vuln.cpp", "void f(char* cmd) { system(cmd); }");
+
+        var evidence = new SrcDepRecordingEvidenceFactory();
+        var engine = new SourceRuleEngine();
+        var check = new SourceAnalysisCheck(evidence, engine);
+
+        var result = await check.ExecuteAsync(SrcDepHarness.CreateContext(root.Path, evidence), CancellationToken.None);
+        Assert.Contains(result.Findings, f => f.CheckId.Value == SourceAnalysisCheck.CheckIdValue && f.Title.Contains("Shell command"));
+    }
+
+    [Fact]
+    public async Task CppTlsRule_DetectsDisabledVerification()
+    {
+        using var root = new SrcDepTempDir();
+        root.Write("src/vuln.cpp", "void f(SSL_CTX* ctx) { SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL); }");
+
+        var evidence = new SrcDepRecordingEvidenceFactory();
+        var engine = new SourceRuleEngine();
+        var check = new SourceAnalysisCheck(evidence, engine);
+
+        var result = await check.ExecuteAsync(SrcDepHarness.CreateContext(root.Path, evidence), CancellationToken.None);
+        Assert.Contains(result.Findings, f => f.CheckId.Value == SourceAnalysisCheck.CheckIdValue && f.Title.Contains("TLS certificate"));
+    }
+}

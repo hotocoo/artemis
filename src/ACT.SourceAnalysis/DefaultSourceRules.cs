@@ -169,6 +169,30 @@ public static class DefaultSourceRules
             Languages: Lang(SourceLanguage.Cpp),
             MaxMatchesPerFile: 5,
             Pattern: Rx("""(?i)\bMD5_Init\s*\(""", """(?i)\bSHA1_Init\s*\(""", """(?i)\bDES_set_key\s*\(""", """(?i)\bMD5\s*\(\s*[^)]*data""")),
+        new SourceRule(
+            RuleId: "SRC-INJECT-CMD-014",
+            Title: "Shell command execution from untrusted input",
+            WhyItMatters: "Passing untrusted data to system() or popen() allows command injection and remote code execution.",
+            Remediation: new RemediationGuidance("Avoid shell execution; if unavoidable, use parameterized APIs and validate/escape all input.", [], []),
+            FindingClass: "CommandInjectionSink",
+            Severity: Severity.High,
+            Confidence: ConfidenceLevel.Medium,
+            ExploitabilityIndicator: true,
+            Languages: Lang(SourceLanguage.Cpp),
+            MaxMatchesPerFile: 5,
+            Pattern: Rx("""\bsystem\s*\(""", """\bpopen\s*\(""", """\bexec[lv]?p?\s*\(""", """\bexeclp\s*\(""")),
+        new SourceRule(
+            RuleId: "SRC-TLS-015",
+            Title: "TLS certificate verification disabled",
+            WhyItMatters: "Disabling certificate verification allows man-in-the-middle attacks on encrypted traffic.",
+            Remediation: new RemediationGuidance("Always verify TLS certificates; use system trust stores or pinned certificates.", [], []),
+            FindingClass: "TlsConfigSink",
+            Severity: Severity.High,
+            Confidence: ConfidenceLevel.High,
+            ExploitabilityIndicator: true,
+            Languages: Lang(SourceLanguage.Cpp),
+            MaxMatchesPerFile: 5,
+            Pattern: Rx("""(?i)SSL_set_verify\s*\([^)]*SSL_VERIFY_NONE""", """(?i)CURLOPT_SSL_VERIFYPEER\s*[)]*\s*=\s*0""", """(?i)CURLOPT_SSL_VERIFYHOST\s*[)]*\s*=\s*0""", """(?i)SSL_CTX_set_verify\s*\([^)]*SSL_VERIFY_NONE""")),
     ];
 
     /// <summary>Secret candidates must mix at least three character classes to cut false positives.</summary>
