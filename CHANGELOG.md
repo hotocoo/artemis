@@ -25,6 +25,29 @@ a version bump commits to; the product version itself lives once in
   remediate --list` shows which stored findings are remediable. 14 new unit/live-loopback tests
   cover the planner and the apply-and-verify loop.
 
+### Added (remediation extended to code and dependencies)
+
+- **Remediation now reaches source-code and dependency findings, not just web responses.**
+  - *Dependency remediation:* `artemis remediate FINDING_ID --repo PATH` upgrades the vulnerable
+    package in its manifest to the advisory's fixed version - a surgical, single-package edit that
+    preserves the rest of the file. Supports NuGet (.csproj), npm (package.json), PyPI
+    (requirements.txt), and Cargo (Cargo.toml). Fails closed (no partial writes) when the package
+    is absent or the manifest is unrecognized.
+  - *Source remediation:* for rules with a safe, deterministic fix, the engine rewrites the
+    offending code in place - weak crypto (MD5/SHA1/DES -> SHA-256/AES), disabled TLS validation
+    (verify=False -> verify=True, rejectUnauthorized:false -> true), and insecure cookie flags
+    (Secure/HttpOnly = false -> true). Rules without a provably-safe automatic fix (e.g. committed
+    secrets, SQL injection) are honestly reported as guidance-only rather than rewritten blindly.
+  - 9 new tests cover the manifest upgrader across all four ecosystems and the source fixer across
+    the auto-fixable rules. End-to-end verified: a repo with `hashlib.md5` + `verify=False` was
+    scanned (2 findings), remediated, and re-scanned (0 findings).
+
+### Changed
+
+- **Honest versioning.** Removed the premature 1.x release tags (v1.2.0, v1.1.0) that overclaimed
+  production readiness. The project is now versioned 0.x to reflect that it is a pre-1.0 tool under
+  active development. v0.1.2 is the current release.
+
 ## [1.2.0] - 2026-08-29
 
 ### Added
