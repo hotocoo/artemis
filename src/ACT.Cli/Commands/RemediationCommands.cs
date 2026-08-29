@@ -126,8 +126,13 @@ public static class RemediationCommands
 
         if (fixedVersion is null)
         {
-            var payload = new { findingId = finding.FindingId, kind = "dependency", outcome = "NotRemediable",
-                detail = "No fixed version is recorded for this advisory; upgrade manually per the guidance." };
+            var payload = new
+            {
+                findingId = finding.FindingId,
+                kind = "dependency",
+                outcome = "NotRemediable",
+                detail = "No fixed version is recorded for this advisory; upgrade manually per the guidance."
+            };
             await OutputWriter.WriteAsync(services, "No fixed version recorded; upgrade manually.", JsonSerializer.Serialize(payload, JsonOpts.Indented));
             return ExitCodes.RuntimeFailure;
         }
@@ -162,8 +167,13 @@ public static class RemediationCommands
 
         if (ruleId is null)
         {
-            var payload = new { findingId = finding.FindingId, kind = "source", outcome = "NotRemediable",
-                detail = "Could not determine the source rule for this finding." };
+            var payload = new
+            {
+                findingId = finding.FindingId,
+                kind = "source",
+                outcome = "NotRemediable",
+                detail = "Could not determine the source rule for this finding."
+            };
             await OutputWriter.WriteAsync(services, "Could not determine the source rule.", JsonSerializer.Serialize(payload, JsonOpts.Indented));
             return ExitCodes.RuntimeFailure;
         }
