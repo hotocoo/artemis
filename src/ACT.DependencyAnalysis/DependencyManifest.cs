@@ -9,7 +9,8 @@ public enum DependencyEcosystem
     Npm,
     PyPi,
     Cargo,
-    CMake
+    CMake,
+    Go
 }
 
 /// <summary>Canonical advisory-feed names for each supported ecosystem.</summary>
@@ -23,6 +24,7 @@ public static class DependencyEcosystemNames
         DependencyEcosystem.PyPi => "PyPI",
         DependencyEcosystem.Cargo => "crates.io",
         DependencyEcosystem.CMake => "CMake",
+        DependencyEcosystem.Go => "Go",
         _ => "Unknown"
     };
 }

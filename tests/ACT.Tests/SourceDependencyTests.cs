@@ -1148,3 +1148,83 @@ public class SrcDepCMakeCheckTests
         Assert.Equal(1, result.TargetsExamined);
     }
 }
+
+// ============================================================================
+// Go module dependency analysis tests.
+// ============================================================================
+
+public class SrcDepGoModParserTests
+{
+    private readonly ManifestParser _parser = new();
+
+    [Fact]
+    public async Task GoMod_ParsesRequireBlocks()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            module github.com/example/project
+
+            go 1.21
+
+            require (
+                github.com/gin-gonic/gin v1.9.1
+                golang.org/x/net v0.17.0
+            )
+            """;
+        var path = root.Write("go.mod", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        Assert.Equal(DependencyEcosystem.Go, manifest.Ecosystem);
+        Assert.Empty(manifest.ParseIssues);
+        Assert.Equal(2, manifest.Entries.Count);
+        Assert.Contains(manifest.Entries, e => e.Name == "github.com/gin-gonic/gin" && e.Version == "v1.9.1" && e.IsDirect);
+        Assert.Contains(manifest.Entries, e => e.Name == "golang.org/x/net" && e.Version == "v0.17.0" && e.IsDirect);
+    }
+
+    [Fact]
+    public async Task GoMod_SeparatesDirectFromIndirect()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            module github.com/example/project
+
+            go 1.21
+
+            require (
+                github.com/gin-gonic/gin v1.9.1
+                github.com/bytedance/sonic v1.11.3 // indirect
+            )
+            """;
+        var path = root.Write("go.mod", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        Assert.Equal(2, manifest.Entries.Count);
+        var direct = manifest.Entries.Single(e => e.Name == "github.com/gin-gonic/gin");
+        Assert.True(direct.IsDirect);
+        var indirect = manifest.Entries.Single(e => e.Name == "github.com/bytedance/sonic");
+        Assert.False(indirect.IsDirect);
+    }
+
+    [Fact]
+    public async Task GoMod_HandlesSingleLineRequire()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            module github.com/example/project
+
+            go 1.21
+
+            require github.com/solo/dep v2.0.0
+            """;
+        var path = root.Write("go.mod", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        var entry = Assert.Single(manifest.Entries);
+        Assert.Equal("github.com/solo/dep", entry.Name);
+        Assert.Equal("v2.0.0", entry.Version);
+        Assert.True(entry.IsDirect);
+    }
+}

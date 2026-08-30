@@ -26,8 +26,142 @@ public sealed class ManifestParser
                || fileName.Equals("package-lock.json", StringComparison.OrdinalIgnoreCase)
                || fileName.Equals("requirements.txt", StringComparison.OrdinalIgnoreCase)
                || fileName.Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase)
-               || fileName.Equals("CMakeLists.txt", StringComparison.OrdinalIgnoreCase);
+               || fileName.Equals("CMakeLists.txt", StringComparison.OrdinalIgnoreCase)
+               || fileName.Equals("go.mod", StringComparison.OrdinalIgnoreCase);
     }
+    /// <summary>
+    /// Parses a go.mod file, extracting dependencies from require blocks.
+    /// Indirect dependencies are marked as not direct.
+    /// </summary>
+    private static async Task<DependencyManifest> ParseGoModAsync(Stream stream, string path, CancellationToken ct)
+    {
+        var entries = new List<DependencyEntry>();
+        var issues = new List<ParseIssue>();
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+
+        try
+        {
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+            var inRequireBlock = false;
+
+            while ((await reader.ReadLineAsync(ct).ConfigureAwait(false)) is { } line)
+            {
+                var trimmed = line.Trim();
+
+                // Skip comments and empty lines
+                if (trimmed.Length == 0 || trimmed.StartsWith("//"))
+                {
+                    continue;
+                }
+
+                // Detect require block start
+                if (trimmed.StartsWith("require (", StringComparison.Ordinal))
+                {
+                    inRequireBlock = true;
+                    continue;
+                }
+
+                // Detect require block end
+                if (inRequireBlock && trimmed == ")")
+                {
+                    inRequireBlock = false;
+                    continue;
+                }
+
+                // Parse require entries inside a block
+                if (inRequireBlock)
+                {
+                    var (name, version, isIndirect) = ParseGoRequireLine(trimmed);
+                    if (name is not null && version is not null && seenNames.Add(name))
+                    {
+                        entries.Add(new DependencyEntry(name, version, IsDirect: !isIndirect, path));
+                    }
+                    continue;
+                }
+
+                // Handle single-line require statements: require module version
+                if (trimmed.StartsWith("require ", StringComparison.Ordinal))
+                {
+                    var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length >= 2)
+                    {
+                        var name = parts[1];
+                        var version = parts[2];
+                        var isIndirect = trimmed.Contains("// indirect", StringComparison.Ordinal);
+                        if (IsValidGoModuleName(name) && seenNames.Add(name))
+                        {
+                            entries.Add(new DependencyEntry(name, version, IsDirect: !isIndirect, path));
+                        }
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw ActException.FailClosed(
+                ErrorCategory.Parser,
+                "A go.mod file could not be read to completion.",
+                $"Reading '{path}' failed: {ex.GetType().Name}: {ex.Message}",
+                ex);
+        }
+
+        return new DependencyManifest(DependencyEcosystem.Go, entries, issues);
+    }
+
+    /// <summary>Parses a require line inside a require block, returning name, version, and indirect flag.</summary>
+    private static (string? Name, string? Version, bool IsIndirect) ParseGoRequireLine(string line)
+    {
+        // Remove inline comments
+        var commentIndex = line.IndexOf("//", StringComparison.Ordinal);
+        var isIndirect = commentIndex >= 0 && line[commentIndex..].Contains("indirect", StringComparison.Ordinal);
+        if (commentIndex >= 0)
+        {
+            line = line[..commentIndex].TrimEnd();
+        }
+
+        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length >= 2)
+        {
+            var name = parts[0];
+            var version = parts[1];
+            if (IsValidGoModuleName(name))
+            {
+                return (name, version, isIndirect);
+            }
+        }
+
+        return (null, null, false);
+    }
+
+    /// <summary>True when the name is a valid Go module path.</summary>
+    private static bool IsValidGoModuleName(string name)
+    {
+        if (name.Length == 0)
+        {
+            return false;
+        }
+
+        // Go module names must start with a letter or digit and contain only valid characters
+        if (!char.IsLetterOrDigit(name[0]))
+        {
+            return false;
+        }
+
+        foreach (var c in name)
+        {
+            if (!char.IsLetterOrDigit(c) && c is not ('.' or '-' or '_' or '/'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
 
     /// <summary>Maps a supported manifest file name to its ecosystem.</summary>
     public static DependencyEcosystem EcosystemFor(string fileName)
@@ -41,6 +175,7 @@ public sealed class ManifestParser
             "requirements.txt" => DependencyEcosystem.PyPi,
             "cargo.toml" => DependencyEcosystem.Cargo,
             "cmakelists.txt" => DependencyEcosystem.CMake,
+            "go.mod" => DependencyEcosystem.Go,
             _ => DependencyEcosystem.Unknown
         };
     }
@@ -105,6 +240,11 @@ public sealed class ManifestParser
         if (lower == "cmakelists.txt")
         {
             return await ParseCMakeListsAsync(contentStream, sourceDisplayPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (lower == "go.mod")
+        {
+            return await ParseGoModAsync(contentStream, sourceDisplayPath, cancellationToken).ConfigureAwait(false);
         }
 
         return DependencyManifest.WithIssue(
