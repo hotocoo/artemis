@@ -177,6 +177,8 @@ public sealed class ManifestParser
             "cmakelists.txt" => DependencyEcosystem.CMake,
             "go.mod" => DependencyEcosystem.Go,
             "pom.xml" => DependencyEcosystem.Maven,
+            "build.gradle" => DependencyEcosystem.Gradle,
+            "build.gradle.kts" => DependencyEcosystem.Gradle,
             _ => DependencyEcosystem.Unknown
         };
     }
@@ -251,6 +253,11 @@ public sealed class ManifestParser
         if (lower == "pom.xml")
         {
             return await ParsePomXmlAsync(contentStream, sourceDisplayPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (lower == "build.gradle" || lower == "build.gradle.kts")
+        {
+            return await ParseBuildGradleAsync(contentStream, sourceDisplayPath, cancellationToken).ConfigureAwait(false);
         }
 
         return DependencyManifest.WithIssue(
@@ -1119,6 +1126,102 @@ public sealed class ManifestParser
 
         return new DependencyManifest(DependencyEcosystem.Maven, entries, issues);
     }
+    /// <summary>
+    /// Parses a build.gradle file, extracting dependencies from the dependencies block.
+    /// All dependencies are marked as direct (Gradle doesn't distinguish in the manifest).
+    /// </summary>
+    private static async Task<DependencyManifest> ParseBuildGradleAsync(Stream stream, string path, CancellationToken ct)
+    {
+        var entries = new List<DependencyEntry>();
+        var issues = new List<ParseIssue>();
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+
+        try
+        {
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+            var inDependenciesBlock = false;
+
+            while ((await reader.ReadLineAsync(ct).ConfigureAwait(false)) is { } line)
+            {
+                var trimmed = line.Trim();
+
+                // Skip comments and empty lines
+                if (trimmed.Length == 0 || trimmed.StartsWith("//") || trimmed.StartsWith("/*"))
+                {
+                    continue;
+                }
+
+                // Detect dependencies block start
+                if (trimmed.StartsWith("dependencies {", StringComparison.Ordinal))
+                {
+                    inDependenciesBlock = true;
+                    continue;
+                }
+
+                // Detect dependencies block end
+                if (inDependenciesBlock && trimmed == "}")
+                {
+                    inDependenciesBlock = false;
+                    continue;
+                }
+
+                // Parse dependency entries inside the block
+                if (inDependenciesBlock)
+                {
+                    var (name, version) = ParseGradleDependencyLine(trimmed);
+                    if (name is not null && seenNames.Add(name))
+                    {
+                        entries.Add(new DependencyEntry(name, version, IsDirect: true, path));
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw ActException.FailClosed(
+                ErrorCategory.Parser,
+                "A build.gradle file could not be read to completion.",
+                $"Reading '{path}' failed: {ex.GetType().Name}: {ex.Message}",
+                ex);
+        }
+
+        return new DependencyManifest(DependencyEcosystem.Gradle, entries, issues);
+    }
+
+    /// <summary>Parses a Gradle dependency line, returning name and version.</summary>
+    private static (string? Name, string? Version) ParseGradleDependencyLine(string line)
+    {
+        // Look for quoted dependency specification: 'group:artifact:version' or "group:artifact:version"
+        var quoteIndex = line.IndexOfAny(new[] { '\'', '"' });
+        if (quoteIndex < 0)
+        {
+            return (null, null);
+        }
+
+        var quoteChar = line[quoteIndex];
+        var endIndex = line.IndexOf(quoteChar, quoteIndex + 1);
+        if (endIndex < 0)
+        {
+            return (null, null);
+        }
+
+        var spec = line[(quoteIndex + 1)..endIndex];
+        var parts = spec.Split(':');
+
+        if (parts.Length >= 2)
+        {
+            var name = parts[0] + ":" + parts[1];
+            var version = parts.Length >= 3 ? parts[2] : null;
+            return (name, version);
+        }
+
+        return (null, null);
+    }
+
 
 }
 

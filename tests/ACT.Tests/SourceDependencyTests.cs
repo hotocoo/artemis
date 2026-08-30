@@ -1301,3 +1301,55 @@ public class SrcDepPomXmlParserTests
         Assert.Null(entry.Version);
     }
 }
+
+// ============================================================================
+// Gradle build.gradle dependency analysis tests.
+// ============================================================================
+
+public class SrcDepBuildGradleParserTests
+{
+    private readonly ManifestParser _parser = new();
+
+    [Fact]
+    public async Task BuildGradle_ParsesDependencies()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            plugins {
+                id 'java'
+            }
+
+            dependencies {
+                implementation 'org.springframework:spring-core:5.3.20'
+                implementation 'com.google.guava:guava:31.1-jre'
+            }
+            """;
+        var path = root.Write("build.gradle", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        Assert.Equal(DependencyEcosystem.Gradle, manifest.Ecosystem);
+        Assert.Empty(manifest.ParseIssues);
+        Assert.Equal(2, manifest.Entries.Count);
+        Assert.Contains(manifest.Entries, e => e.Name == "org.springframework:spring-core" && e.Version == "5.3.20" && e.IsDirect);
+        Assert.Contains(manifest.Entries, e => e.Name == "com.google.guava:guava" && e.Version == "31.1-jre" && e.IsDirect);
+    }
+
+    [Fact]
+    public async Task BuildGradle_HandlesMissingVersion()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            dependencies {
+                implementation 'org.springframework:spring-core'
+            }
+            """;
+        var path = root.Write("build.gradle", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        var entry = Assert.Single(manifest.Entries);
+        Assert.Equal("org.springframework:spring-core", entry.Name);
+        Assert.Null(entry.Version);
+    }
+}

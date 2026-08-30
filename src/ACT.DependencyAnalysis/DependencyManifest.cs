@@ -11,7 +11,8 @@ public enum DependencyEcosystem
     Cargo,
     CMake,
     Go,
-    Maven
+    Maven,
+    Gradle
 }
 
 /// <summary>Canonical advisory-feed names for each supported ecosystem.</summary>
@@ -27,6 +28,7 @@ public static class DependencyEcosystemNames
         DependencyEcosystem.CMake => "CMake",
         DependencyEcosystem.Go => "Go",
         DependencyEcosystem.Maven => "Maven",
+        DependencyEcosystem.Gradle => "Gradle",
         _ => "Unknown"
     };
 }
