@@ -25,7 +25,8 @@ public sealed class ManifestParser
         return fileName.Equals("packages.lock.json", StringComparison.OrdinalIgnoreCase)
                || fileName.Equals("package-lock.json", StringComparison.OrdinalIgnoreCase)
                || fileName.Equals("requirements.txt", StringComparison.OrdinalIgnoreCase)
-               || fileName.Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase);
+               || fileName.Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase)
+               || fileName.Equals("CMakeLists.txt", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>Maps a supported manifest file name to its ecosystem.</summary>
@@ -39,6 +40,7 @@ public sealed class ManifestParser
             "package-lock.json" => DependencyEcosystem.Npm,
             "requirements.txt" => DependencyEcosystem.PyPi,
             "cargo.toml" => DependencyEcosystem.Cargo,
+            "cmakelists.txt" => DependencyEcosystem.CMake,
             _ => DependencyEcosystem.Unknown
         };
     }
@@ -98,6 +100,11 @@ public sealed class ManifestParser
         if (lower == "cargo.toml")
         {
             return await ParseCargoTomlAsync(contentStream, sourceDisplayPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (lower == "cmakelists.txt")
+        {
+            return await ParseCMakeListsAsync(contentStream, sourceDisplayPath, cancellationToken).ConfigureAwait(false);
         }
 
         return DependencyManifest.WithIssue(
@@ -501,6 +508,295 @@ public sealed class ManifestParser
         }
 
         return new DependencyManifest(DependencyEcosystem.Cargo, entries, issues);
+    }
+
+    /// <summary>
+    /// Parses a CMakeLists.txt file, extracting FetchContent_Declare and find_package
+    /// dependency declarations. CMake git dependencies have no canonical advisory feed;
+    /// the consuming check evaluates supply-chain hygiene (transport, pinning) directly.
+    /// </summary>
+    private static async Task<DependencyManifest> ParseCMakeListsAsync(Stream stream, string path, CancellationToken ct)
+    {
+        var entries = new List<DependencyEntry>();
+        var issues = new List<ParseIssue>();
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+            var lines = new List<string>();
+            while ((await reader.ReadLineAsync(ct).ConfigureAwait(false)) is { } line)
+            {
+                lines.Add(StripCMakeComment(line));
+            }
+
+            for (var i = 0; i < lines.Count; i++)
+            {
+                if (TryAccumulateCMakeCommand(lines, ref i, "FetchContent_Declare", out var fetchBuffer))
+                {
+                    var entry = ParseFetchContentDeclare(fetchBuffer, path, issues);
+                    if (entry is not null && seenNames.Add(entry.Name))
+                    {
+                        entries.Add(entry);
+                    }
+
+                    continue;
+                }
+
+                if (TryAccumulateCMakeCommand(lines, ref i, "find_package", out var findBuffer))
+                {
+                    var entry = ParseFindPackage(findBuffer, path, issues);
+                    if (entry is not null && seenNames.Add(entry.Name))
+                    {
+                        entries.Add(entry);
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw ActException.FailClosed(
+                ErrorCategory.Parser,
+                "A CMakeLists.txt file could not be read to completion.",
+                $"Reading '{path}' failed: {ex.GetType().Name}: {ex.Message}",
+                ex);
+        }
+
+        return new DependencyManifest(DependencyEcosystem.CMake, entries, issues);
+    }
+
+    /// <summary>
+    /// Detects the given CMake command at or after <paramref name="index"/> and, when found,
+    /// accumulates subsequent lines until the command's parentheses balance. Advances
+    /// <paramref name="index"/> to the last consumed line and returns the full command text.
+    /// </summary>
+    private static bool TryAccumulateCMakeCommand(List<string> lines, ref int index, string command, out string buffer)
+    {
+        buffer = string.Empty;
+        for (var scan = index; scan < lines.Count; scan++)
+        {
+            var line = lines[scan].Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            var commandIndex = line.IndexOf(command, StringComparison.OrdinalIgnoreCase);
+            if (commandIndex < 0)
+            {
+                continue;
+            }
+
+            // Confirm a whole-word command occurrence, not a substring of a longer token.
+            var beforeOk = commandIndex == 0 || char.IsWhiteSpace(line[commandIndex - 1]);
+            var after = commandIndex + command.Length;
+            var afterOk = after >= line.Length || line[after] is '(' or ' ' or '\t';
+            if (!beforeOk || !afterOk)
+            {
+                continue;
+            }
+
+            buffer = line[commandIndex..];
+            var last = scan;
+            while (!CMakeParensBalanced(buffer) && last + 1 < lines.Count)
+            {
+                last++;
+                buffer += " " + lines[last].Trim();
+            }
+
+            index = last;
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>True when the buffer contains at least one opening paren and all are closed.</summary>
+    private static bool CMakeParensBalanced(string text)
+    {
+        var depth = 0;
+        var seenOpen = false;
+        var inQuote = false;
+        var quoteChar = '\0';
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+            if (inQuote)
+            {
+                if (c == quoteChar)
+                {
+                    inQuote = false;
+                }
+
+                continue;
+            }
+
+            if (c is '"' or '\'')
+            {
+                inQuote = true;
+                quoteChar = c;
+                continue;
+            }
+
+            if (c == '(')
+            {
+                depth++;
+                seenOpen = true;
+            }
+            else if (c == ')')
+            {
+                depth--;
+            }
+        }
+
+        return seenOpen && depth <= 0;
+    }
+
+    /// <summary>Removes a CMake # comment while respecting quoted strings.</summary>
+    private static string StripCMakeComment(string line)
+    {
+        var inQuote = false;
+        var quoteChar = '\0';
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+            if (inQuote)
+            {
+                if (c == quoteChar)
+                {
+                    inQuote = false;
+                }
+
+                continue;
+            }
+
+            if (c is '"' or '\'')
+            {
+                inQuote = true;
+                quoteChar = c;
+                continue;
+            }
+
+            if (c == '#')
+            {
+                return line[..i];
+            }
+        }
+
+        return line;
+    }
+
+    private static DependencyEntry? ParseFetchContentDeclare(string buffer, string path, List<ParseIssue> issues)
+    {
+        var openParen = buffer.IndexOf('(');
+        if (openParen < 0)
+        {
+            return null;
+        }
+
+        var rest = buffer[(openParen + 1)..].Trim();
+        var name = CutAtFirstToken(rest);
+        if (name.Length == 0 || !IsValidCMakeIdentifier(name))
+        {
+            issues.Add(new ParseIssue(
+                path,
+                "A FetchContent declaration has no recognizable dependency name.",
+                $"FetchContent_Declare without a valid name in '{path}'."));
+            return null;
+        }
+
+        var url = ExtractCMakeOption(buffer, "GIT_REPOSITORY");
+        var tag = ExtractCMakeOption(buffer, "GIT_TAG");
+        return new DependencyEntry(name, tag, IsDirect: true, path, SourceUrl: url);
+    }
+
+    private static DependencyEntry? ParseFindPackage(string buffer, string path, List<ParseIssue> issues)
+    {
+        var openParen = buffer.IndexOf('(');
+        if (openParen < 0)
+        {
+            return null;
+        }
+
+        var rest = buffer[(openParen + 1)..].Trim().TrimEnd(')', ' ');
+        var name = CutAtFirstToken(rest);
+        if (name.Length == 0 || !IsValidCMakeIdentifier(name))
+        {
+            return null;
+        }
+
+        var tokens = rest.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string? version = null;
+        if (tokens.Length >= 2 && IsVersionLikeToken(tokens[1]))
+        {
+            version = tokens[1].TrimEnd(')');
+        }
+
+        return new DependencyEntry(name, version, IsDirect: true, path);
+    }
+
+    /// <summary>Extracts the value of a CMake option (e.g. GIT_REPOSITORY, GIT_TAG) from a command buffer.</summary>
+    private static string? ExtractCMakeOption(string buffer, string option)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(
+            buffer,
+            $@"(?i)\b{option}\s+(""[^""]*""|'[^']*'|[^)\s]+)");
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var value = match.Groups[1].Value.Trim('"', '\'');
+        return value.Length > 0 ? value : null;
+    }
+
+    /// <summary>Returns the first whitespace-delimited token of the text.</summary>
+    private static string CutAtFirstToken(string text)
+    {
+        text = text.TrimStart();
+        var i = 0;
+        while (i < text.Length && !char.IsWhiteSpace(text[i]))
+        {
+            i++;
+        }
+
+        return text[..i];
+    }
+
+    /// <summary>True when the token looks like a version constraint (starts with a digit or comparison operator).</summary>
+    private static bool IsVersionLikeToken(string token)
+    {
+        if (token.Length == 0)
+        {
+            return false;
+        }
+
+        var first = token[0];
+        return char.IsDigit(first)
+               || (first is '>' or '<' or '=' && token.Length > 1 && char.IsDigit(token[1]));
+    }
+
+    /// <summary>True when the name is a valid CMake identifier (letters, digits, underscore, hyphen).</summary>
+    private static bool IsValidCMakeIdentifier(string name)
+    {
+        if (name.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var c in name)
+        {
+            if (!char.IsLetterOrDigit(c) && c != '_' && c != '-')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static string? ReadString(JsonElement element, string propertyName) =>

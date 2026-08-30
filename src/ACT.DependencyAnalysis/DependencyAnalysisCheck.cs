@@ -95,6 +95,15 @@ public sealed class DependencyAnalysisCheck : ISecurityCheck
             var manifest = await parser.ParseFileAsync(discovered.AbsolutePath, cancellationToken).ConfigureAwait(false);
 
             manifestsExamined++;
+
+            // CMake git dependencies have no canonical advisory feed; evaluate supply-chain
+            // hygiene (transport security, mutability of the pinned reference) directly.
+            if (manifest.Ecosystem == DependencyEcosystem.CMake)
+            {
+                EmitCMakeSupplyChainFindings(manifest, repositoryName, context.Assessment.AssessmentId, correlation, findings, standaloneEvidence);
+                continue;
+            }
+
             var report = await matcher.MatchAsync(manifest, budget, cancellationToken).ConfigureAwait(false);
             warnings += report.Warnings.Count;
             foreach (var warningText in report.Warnings.Take(5))
@@ -201,6 +210,115 @@ public sealed class DependencyAnalysisCheck : ISecurityCheck
             Metadata.Id,
             correlation,
             attributes));
+    }
+
+    /// <summary>
+    /// Emits supply-chain hygiene findings for CMake dependencies: insecure (http://) fetch
+    /// transport and mutable branch references. These are independent of advisory matching.
+    /// </summary>
+    private void EmitCMakeSupplyChainFindings(
+        DependencyManifest manifest,
+        string repositoryName,
+        Guid assessmentId,
+        CorrelationId correlation,
+        ICollection<Finding> findingsSink,
+        ICollection<EvidenceItem> evidenceSink)
+    {
+        foreach (var entry in manifest.Entries)
+        {
+            // 1. Insecure transport: dependency fetched over unencrypted HTTP.
+            if (entry.SourceUrl is { } url && url.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+            {
+                var httpFinding = FindingFactory.Create(
+                    assessmentId,
+                    Metadata.Id,
+                    targetDisplay: entry.Name + "@" + (entry.Version ?? "unpinned"),
+                    category: CheckCategory.Dependency,
+                    title: $"CMake dependency {entry.Name} fetched over unencrypted HTTP",
+                    description: $"The CMake build fetches {entry.Name} from an insecure http:// URL, exposing the dependency to tampering and interception in transit.",
+                    severity: Severity.High,
+                    confidence: ConfidenceLevel.High,
+                    exploitabilityIndicator: true,
+                    businessImpact: BusinessImpactLevel.Severe,
+                    whyItMatters: "Fetching build dependencies over unencrypted transport allows man-in-the-middle attackers to substitute malicious code before it is compiled.",
+                    technicalExplanation: $"CMakeLists.txt declares {entry.Name} with GIT_REPOSITORY {url}.",
+                    remediation: new RemediationGuidance(
+                        "Use an https:// URL for the dependency source.",
+                        ["Change the GIT_REPOSITORY URL to https://.", "Re-run the assessment to confirm the transport is secure."],
+                        []),
+                    fingerprintComponents: new FingerprintComponents(
+                        Metadata.Id,
+                        repositoryName,
+                        entry.SourceFile + "|cmake-http|" + entry.Name,
+                        "CMakeInsecureTransport"),
+                    assetReference: entry.SourceFile);
+                findingsSink.Add(httpFinding);
+
+                evidenceSink.Add(_evidenceFactory.Create(
+                    httpFinding.FindingId,
+                    EvidenceKind.DependencyMetadata,
+                    "dependency",
+                    "CMake:" + entry.Name + " (" + entry.SourceFile + ")",
+                    Metadata.Id,
+                    correlation,
+                    new Dictionary<string, string>
+                    {
+                        ["ecosystem"] = "CMake",
+                        ["risk"] = "insecure-transport",
+                        ["url"] = url
+                    }));
+            }
+
+            // 2. Mutable branch reference: dependency pinned to a branch that can change.
+            if (entry.Version is { } version && IsMutableBranchTag(version))
+            {
+                var branchFinding = FindingFactory.Create(
+                    assessmentId,
+                    Metadata.Id,
+                    targetDisplay: entry.Name + "@" + version,
+                    category: CheckCategory.Dependency,
+                    title: $"CMake dependency {entry.Name} pinned to a mutable branch",
+                    description: $"The CMake build pins {entry.Name} to branch '{version}', which can change without notice and silently alter the compiled dependency.",
+                    severity: Severity.Medium,
+                    confidence: ConfidenceLevel.Medium,
+                    exploitabilityIndicator: false,
+                    businessImpact: BusinessImpactLevel.Significant,
+                    whyItMatters: "Branch-based dependency pinning is mutable; upstream changes or a compromised branch propagate into the build without a version bump.",
+                    technicalExplanation: $"CMakeLists.txt declares {entry.Name} with GIT_TAG {version}.",
+                    remediation: new RemediationGuidance(
+                        "Pin the dependency to an immutable version tag or commit.",
+                        ["Replace the branch reference with a version tag or commit SHA.", "Re-run the assessment to confirm the dependency is immutably pinned."],
+                        []),
+                    fingerprintComponents: new FingerprintComponents(
+                        Metadata.Id,
+                        repositoryName,
+                        entry.SourceFile + "|cmake-branch|" + entry.Name,
+                        "CMakeMutableBranch"),
+                    assetReference: entry.SourceFile);
+                findingsSink.Add(branchFinding);
+
+                evidenceSink.Add(_evidenceFactory.Create(
+                    branchFinding.FindingId,
+                    EvidenceKind.DependencyMetadata,
+                    "dependency",
+                    "CMake:" + entry.Name + "@" + version + " (" + entry.SourceFile + ")",
+                    Metadata.Id,
+                    correlation,
+                    new Dictionary<string, string>
+                    {
+                        ["ecosystem"] = "CMake",
+                        ["risk"] = "mutable-branch",
+                        ["tag"] = version
+                    }));
+            }
+        }
+    }
+
+    /// <summary>True when the GIT_TAG is a well-known mutable branch rather than an immutable version or commit.</summary>
+    private static bool IsMutableBranchTag(string tag)
+    {
+        var lowered = tag.Trim().ToLowerInvariant();
+        return lowered is "master" or "main" or "develop" or "dev" or "trunk" or "next" or "head";
     }
 
     private static BusinessImpactLevel ImpactFor(Severity severity) => severity switch

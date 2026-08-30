@@ -937,3 +937,194 @@ public class SrcDepCppRulesTests
         Assert.Contains(result.Findings, f => f.CheckId.Value == SourceAnalysisCheck.CheckIdValue && f.Title.Contains("TLS certificate"));
     }
 }
+
+// ============================================================================
+// CMake dependency analysis tests.
+// ============================================================================
+
+public class SrcDepCMakeParserTests
+{
+    private readonly ManifestParser _parser = new();
+
+    [Fact]
+    public async Task CMakeLists_FetchContent_ParsesNameUrlAndTag()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            cmake_minimum_required(VERSION 3.16)
+            project(demo LANGUAGES CXX)
+            include(FetchContent)
+            FetchContent_Declare(raylib
+                GIT_REPOSITORY https://github.com/raysan5/raylib.git
+                GIT_TAG 5.5)
+            FetchContent_MakeAvailable(raylib)
+            """;
+        var path = root.Write("CMakeLists.txt", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        Assert.Equal(DependencyEcosystem.CMake, manifest.Ecosystem);
+        Assert.Empty(manifest.ParseIssues);
+        var entry = Assert.Single(manifest.Entries);
+        Assert.Equal("raylib", entry.Name);
+        Assert.Equal("5.5", entry.Version);
+        Assert.Equal("https://github.com/raysan5/raylib.git", entry.SourceUrl);
+        Assert.True(entry.IsDirect);
+    }
+
+    [Fact]
+    public async Task CMakeLists_FindPackage_ParsesNameAndVersion()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            cmake_minimum_required(VERSION 3.16)
+            project(demo LANGUAGES CXX)
+            find_package(Threads REQUIRED)
+            find_package(ZLIB 1.2.11)
+            find_package(Python3 COMPONENTS Interpreter)
+            """;
+        var path = root.Write("CMakeLists.txt", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        Assert.Equal(DependencyEcosystem.CMake, manifest.Ecosystem);
+        Assert.Equal(3, manifest.Entries.Count);
+        // Threads has no version constraint.
+        Assert.Null(manifest.Entries.Single(static e => e.Name == "Threads").Version);
+        // ZLIB has a numeric version constraint.
+        Assert.Equal("1.2.11", manifest.Entries.Single(static e => e.Name == "ZLIB").Version);
+        // Python3's second token (COMPONENTS) is not a version.
+        Assert.Null(manifest.Entries.Single(static e => e.Name == "Python3").Version);
+    }
+
+    [Fact]
+    public async Task CMakeLists_MultiLineFetchContent_AccumulatesUntilBalanced()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            include(FetchContent)
+            FetchContent_Declare(
+                googletest
+                GIT_REPOSITORY https://github.com/google/googletest.git
+                GIT_TAG v1.14.0
+            )
+            """;
+        var path = root.Write("CMakeLists.txt", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        var entry = Assert.Single(manifest.Entries);
+        Assert.Equal("googletest", entry.Name);
+        Assert.Equal("v1.14.0", entry.Version);
+        Assert.Equal("https://github.com/google/googletest.git", entry.SourceUrl);
+    }
+
+    [Fact]
+    public async Task CMakeLists_CommentsAndDuplicates_AreHandled()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            # FetchContent_Declare(fake https://evil.example/fake.git GIT_TAG master)
+            include(FetchContent)
+            FetchContent_Declare(real
+                GIT_REPOSITORY https://github.com/example/real.git
+                GIT_TAG 1.0.0)
+            FetchContent_Declare(real
+                GIT_REPOSITORY https://github.com/example/real.git
+                GIT_TAG 1.0.0)
+            """;
+        var path = root.Write("CMakeLists.txt", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        // The commented-out declaration is ignored; the duplicate is deduplicated.
+        var entry = Assert.Single(manifest.Entries);
+        Assert.Equal("real", entry.Name);
+        Assert.Equal("1.0.0", entry.Version);
+    }
+}
+
+public class SrcDepCMakeCheckTests
+{
+    private static async Task<SecurityCheckResult> RunCheckAsync(string repoRoot, IEvidenceFactory evidence)
+    {
+        var provider = DisabledAdvisoryProvider.Instance;
+        var check = new DependencyAnalysisCheck(provider, evidence);
+        return await check.ExecuteAsync(SrcDepHarness.CreateContext(repoRoot, evidence), CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task CMakeCheck_FindsInsecureHttpTransport()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            include(FetchContent)
+            FetchContent_Declare(insecure
+                GIT_REPOSITORY http://github.com/example/insecure.git
+                GIT_TAG 1.0.0)
+            """;
+        root.Write("CMakeLists.txt", content);
+
+        var evidence = new SrcDepRecordingEvidenceFactory();
+        var result = await RunCheckAsync(root.Path, evidence);
+
+        Assert.Equal(CheckExecutionStatus.Completed, result.Status);
+        var finding = Assert.Single(result.Findings);
+        Assert.Equal("ACT-DEP-AUDIT-001", finding.CheckId.Value);
+        Assert.Equal(Severity.High, finding.TechnicalSeverity);
+        Assert.Contains("insecure", finding.Title, StringComparison.Ordinal);
+        Assert.Contains("http", finding.Title, StringComparison.OrdinalIgnoreCase);
+
+        var metadata = Assert.Single(evidence.Items, static i => i.Kind == EvidenceKind.DependencyMetadata);
+        Assert.Equal("CMake", metadata.Attributes["ecosystem"]);
+        Assert.Equal("insecure-transport", metadata.Attributes["risk"]);
+    }
+
+    [Fact]
+    public async Task CMakeCheck_FindsMutableBranchReference()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            include(FetchContent)
+            FetchContent_Declare(branchy
+                GIT_REPOSITORY https://github.com/example/branchy.git
+                GIT_TAG master)
+            """;
+        root.Write("CMakeLists.txt", content);
+
+        var evidence = new SrcDepRecordingEvidenceFactory();
+        var result = await RunCheckAsync(root.Path, evidence);
+
+        Assert.Equal(CheckExecutionStatus.Completed, result.Status);
+        var finding = Assert.Single(result.Findings);
+        Assert.Equal("ACT-DEP-AUDIT-001", finding.CheckId.Value);
+        Assert.Equal(Severity.Medium, finding.TechnicalSeverity);
+        Assert.Contains("branchy", finding.Title, StringComparison.Ordinal);
+        Assert.Contains("branch", finding.Title, StringComparison.OrdinalIgnoreCase);
+
+        var metadata = Assert.Single(evidence.Items, static i => i.Kind == EvidenceKind.DependencyMetadata);
+        Assert.Equal("CMake", metadata.Attributes["ecosystem"]);
+        Assert.Equal("mutable-branch", metadata.Attributes["risk"]);
+    }
+
+    [Fact]
+    public async Task CMakeCheck_CleanManifestProducesNoFindings()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            include(FetchContent)
+            FetchContent_Declare(clean
+                GIT_REPOSITORY https://github.com/example/clean.git
+                GIT_TAG 2.1.0)
+            find_package(Threads REQUIRED)
+            """;
+        root.Write("CMakeLists.txt", content);
+
+        var evidence = new SrcDepRecordingEvidenceFactory();
+        var result = await RunCheckAsync(root.Path, evidence);
+
+        Assert.Equal(CheckExecutionStatus.Completed, result.Status);
+        Assert.Empty(result.Findings);
+        Assert.Equal(1, result.TargetsExamined);
+    }
+}

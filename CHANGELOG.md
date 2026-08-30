@@ -8,6 +8,26 @@ The typed contracts in `src/ACT.Contracts` are the public API surface whose stab
 a version bump commits to; the product version itself lives once in
 `Directory.Build.props` and flows to the CLI, reports, and this file from there.
 
+## [0.1.5] - 2026-08-30
+
+### Added
+
+- **CMake/FetchContent dependency analysis.** Artemis now inventories CMake build manifests and
+  flags supply-chain risks that have no canonical advisory feed: dependencies fetched over
+  unencrypted http:// transport (High) and dependencies pinned to mutable branch references like
+  master/main/develop (Medium). CMakeLists.txt files are recognized, and multi-line
+  FetchContent_Declare and find_package declarations are parsed correctly.
+- **Complete C++ exec-family command injection detection.** The SRC-INJECT-CMD-014 rule now covers
+  the full exec family (execl, execlp, execle, execv, execve, execvp) in addition to system() and
+  popen(), closing a gap where execve/execle calls were missed.
+
+### Fixed
+
+- **Command-injection rule no longer false-positives on English prose.** The SRC-INJECT-CMD-014
+  pattern previously matched "system (" in comments and documentation (e.g. "rooster-tail system
+  (the duplicate..."), producing false positives. The pattern now requires no whitespace between
+  the function name and the opening parenthesis, matching only genuine C/C++ calls.
+
 ## [0.1.4] - 2026-08-29
 
 ### Added

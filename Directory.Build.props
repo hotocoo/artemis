@@ -9,9 +9,9 @@
     <AnalysisLevel>latest</AnalysisLevel>
     <Deterministic>true</Deterministic>
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
-    <Version>0.1.4</Version>
+    <Version>0.1.5</Version>
     <FileVersion>0.1.4</FileVersion>
-    <InformationalVersion>0.1.4</InformationalVersion>
+    <InformationalVersion>0.1.5</InformationalVersion>
     <Product>Artemis</Product>
     <Authors>Artemis Project Contributors</Authors>
     <Company>Artemis Project Contributors</Company>

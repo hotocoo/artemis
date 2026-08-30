@@ -8,7 +8,8 @@ public enum DependencyEcosystem
     NuGet,
     Npm,
     PyPi,
-    Cargo
+    Cargo,
+    CMake
 }
 
 /// <summary>Canonical advisory-feed names for each supported ecosystem.</summary>
@@ -21,6 +22,7 @@ public static class DependencyEcosystemNames
         DependencyEcosystem.Npm => "npm",
         DependencyEcosystem.PyPi => "PyPI",
         DependencyEcosystem.Cargo => "crates.io",
+        DependencyEcosystem.CMake => "CMake",
         _ => "Unknown"
     };
 }
@@ -30,7 +32,8 @@ public static class DependencyEcosystemNames
 /// <param name="Version">Pinned version, or null when the manifest does not pin one.</param>
 /// <param name="IsDirect">True when the reference was declared directly rather than transitively.</param>
 /// <param name="SourceFile">Display path of the manifest that declared the reference.</param>
-public sealed record DependencyEntry(string Name, string? Version, bool IsDirect, string SourceFile);
+/// <param name="SourceUrl">Remote fetch URL when the dependency is pulled from an external source (e.g. CMake FetchContent); null otherwise.</param>
+public sealed record DependencyEntry(string Name, string? Version, bool IsDirect, string SourceFile, string? SourceUrl = null);
 
 /// <summary>A recoverable content problem recorded during manifest parsing.</summary>
 /// <param name="SourceFile">Display path of the offending manifest.</param>

@@ -180,7 +180,10 @@ public static class DefaultSourceRules
             ExploitabilityIndicator: true,
             Languages: Lang(SourceLanguage.Cpp),
             MaxMatchesPerFile: 5,
-            Pattern: Rx("""\bsystem\s*\(""", """\bpopen\s*\(""", """\bexec[lv]?p?\s*\(""", """\bexeclp\s*\(""")),
+            // No whitespace before "(" : "system (" is common in English prose/comments and
+            // would otherwise false-positive. exec[lv][ep]? covers the full exec family
+            // (execl, execlp, execle, execv, execve, execvp) without matching "execute"/"execution".
+            Pattern: Rx("""\bsystem\(""", """\bpopen\(""", """\bexec[lv][ep]?\(""")),
         new SourceRule(
             RuleId: "SRC-TLS-015",
             Title: "TLS certificate verification disabled",
