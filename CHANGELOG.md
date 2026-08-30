@@ -16,7 +16,11 @@ a version bump commits to; the product version itself lives once in
   flags supply-chain risks that have no canonical advisory feed: dependencies fetched over
   unencrypted http:// transport (High) and dependencies pinned to mutable branch references like
   master/main/develop (Medium). CMakeLists.txt files are recognized, and multi-line
-  FetchContent_Declare and find_package declarations are parsed correctly.
+
+- **Expanded dependency manifest coverage.** Artemis now inventories five additional ecosystems:
+  CMake (CMakeLists.txt with FetchContent/URL declarations), Go (go.mod), Maven (pom.xml),
+  and Gradle (build.gradle/build.gradle.kts). Each parser handles the format's specific
+  syntax, including multi-line declarations, indirect dependencies, and version constraints.  FetchContent_Declare and find_package declarations are parsed correctly.
 - **Complete C++ exec-family command injection detection.** The SRC-INJECT-CMD-014 rule now covers
   the full exec family (execl, execlp, execle, execv, execve, execvp) in addition to system() and
   popen(), closing a gap where execve/execle calls were missed.
