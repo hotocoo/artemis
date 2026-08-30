@@ -1042,6 +1042,26 @@ public class SrcDepCMakeParserTests
         Assert.Equal("real", entry.Name);
         Assert.Equal("1.0.0", entry.Version);
     }
+
+    [Fact]
+    public async Task CMakeLists_FetchContentWithUrl_ParsesUrlAndExtractsVersion()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            include(FetchContent)
+            FetchContent_Declare(tarball_dep
+                URL https://github.com/example/tarball_dep-1.2.3.tar.gz
+            )
+            """;
+        var path = root.Write("CMakeLists.txt", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        var entry = Assert.Single(manifest.Entries);
+        Assert.Equal("tarball_dep", entry.Name);
+        Assert.Equal("https://github.com/example/tarball_dep-1.2.3.tar.gz", entry.SourceUrl);
+    }
+
 }
 
 public class SrcDepCMakeCheckTests

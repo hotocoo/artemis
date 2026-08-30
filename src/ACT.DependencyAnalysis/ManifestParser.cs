@@ -709,7 +709,8 @@ public sealed class ManifestParser
             return null;
         }
 
-        var url = ExtractCMakeOption(buffer, "GIT_REPOSITORY");
+        var url = ExtractCMakeOption(buffer, "GIT_REPOSITORY")
+                  ?? ExtractCMakeOption(buffer, "URL");
         var tag = ExtractCMakeOption(buffer, "GIT_TAG");
         return new DependencyEntry(name, tag, IsDirect: true, path, SourceUrl: url);
     }
