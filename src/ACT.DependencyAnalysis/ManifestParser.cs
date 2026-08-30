@@ -176,6 +176,7 @@ public sealed class ManifestParser
             "cargo.toml" => DependencyEcosystem.Cargo,
             "cmakelists.txt" => DependencyEcosystem.CMake,
             "go.mod" => DependencyEcosystem.Go,
+            "pom.xml" => DependencyEcosystem.Maven,
             _ => DependencyEcosystem.Unknown
         };
     }
@@ -245,6 +246,11 @@ public sealed class ManifestParser
         if (lower == "go.mod")
         {
             return await ParseGoModAsync(contentStream, sourceDisplayPath, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (lower == "pom.xml")
+        {
+            return await ParsePomXmlAsync(contentStream, sourceDisplayPath, cancellationToken).ConfigureAwait(false);
         }
 
         return DependencyManifest.WithIssue(
@@ -1058,5 +1064,61 @@ public sealed class ManifestParser
 
         return requestedRange[start..(end < 0 ? requestedRange.Length : end)];
     }
+    /// <summary>
+    /// Parses a pom.xml file, extracting dependencies from the dependencies section.
+    /// All dependencies are marked as direct (Maven doesn't distinguish in the manifest).
+    /// </summary>
+    private static async Task<DependencyManifest> ParsePomXmlAsync(Stream stream, string path, CancellationToken ct)
+    {
+        var entries = new List<DependencyEntry>();
+        var issues = new List<ParseIssue>();
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+
+        try
+        {
+            var document = await XDocument.LoadAsync(stream, LoadOptions.None, ct).ConfigureAwait(false);
+
+            // Find all dependency elements
+            var dependencies = document.Descendants()
+                .Where(x => x.Name.LocalName == "dependency")
+                .ToList();
+
+            foreach (var dep in dependencies)
+            {
+                var groupId = dep.Elements()
+                    .FirstOrDefault(x => x.Name.LocalName == "groupId")?.Value;
+                var artifactId = dep.Elements()
+                    .FirstOrDefault(x => x.Name.LocalName == "artifactId")?.Value;
+                var version = dep.Elements()
+                    .FirstOrDefault(x => x.Name.LocalName == "version")?.Value;
+
+                if (groupId is null || artifactId is null)
+                {
+                    continue;
+                }
+
+                var name = groupId + ":" + artifactId;
+                if (seenNames.Add(name))
+                {
+                    entries.Add(new DependencyEntry(name, version, IsDirect: true, path));
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is XmlException or IOException or UnauthorizedAccessException)
+        {
+            throw ActException.FailClosed(
+                ErrorCategory.Parser,
+                "A pom.xml file could not be read to completion.",
+                $"Reading '{path}' failed: {ex.GetType().Name}: {ex.Message}",
+                ex);
+        }
+
+        return new DependencyManifest(DependencyEcosystem.Maven, entries, issues);
+    }
+
 }
 

@@ -1228,3 +1228,76 @@ public class SrcDepGoModParserTests
         Assert.True(entry.IsDirect);
     }
 }
+
+// ============================================================================
+// Maven pom.xml dependency analysis tests.
+// ============================================================================
+
+public class SrcDepPomXmlParserTests
+{
+    private readonly ManifestParser _parser = new();
+
+    [Fact]
+    public async Task PomXml_ParsesDependencies()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>my-app</artifactId>
+                <version>1.0.0</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.springframework</groupId>
+                        <artifactId>spring-core</artifactId>
+                        <version>5.3.20</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>com.google.guava</groupId>
+                        <artifactId>guava</artifactId>
+                        <version>31.1-jre</version>
+                    </dependency>
+                </dependencies>
+            </project>
+            """;
+        var path = root.Write("pom.xml", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        Assert.Equal(DependencyEcosystem.Maven, manifest.Ecosystem);
+        Assert.Empty(manifest.ParseIssues);
+        Assert.Equal(2, manifest.Entries.Count);
+        Assert.Contains(manifest.Entries, e => e.Name == "org.springframework:spring-core" && e.Version == "5.3.20" && e.IsDirect);
+        Assert.Contains(manifest.Entries, e => e.Name == "com.google.guava:guava" && e.Version == "31.1-jre" && e.IsDirect);
+    }
+
+    [Fact]
+    public async Task PomXml_HandlesMissingVersion()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>my-app</artifactId>
+                <version>1.0.0</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.springframework</groupId>
+                        <artifactId>spring-core</artifactId>
+                    </dependency>
+                </dependencies>
+            </project>
+            """;
+        var path = root.Write("pom.xml", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        var entry = Assert.Single(manifest.Entries);
+        Assert.Equal("org.springframework:spring-core", entry.Name);
+        Assert.Null(entry.Version);
+    }
+}
