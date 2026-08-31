@@ -49,6 +49,10 @@ public static class ArtemisComposition
     public static IServiceCollection AddArtemisPolicy(this IServiceCollection services)
     {
         services.AddSingleton<EmergencyStop>();
+        // The dependency audit consults the operator-configured advisory feed (OSV or offline
+        // snapshot) when one is enabled; otherwise it degrades to the honest disabled provider.
+        services.AddSingleton<ISecurityAdvisoryProvider>(sp =>
+            AdvisoryProviderFactory.Create(sp.GetRequiredService<IConfiguration>()));
         services.AddSingleton<IPolicyEvaluator>(sp => new ScopePolicyEvaluator(
             sp.GetRequiredService<EmergencyStop>(),
             ScopePolicyEvaluator.AllPermissions,

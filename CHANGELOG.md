@@ -8,6 +8,42 @@ The typed contracts in `src/ACT.Contracts` are the public API surface whose stab
 a version bump commits to; the product version itself lives once in
 `Directory.Build.props` and flows to the CLI, reports, and this file from there.
 
+## [Unreleased]
+
+### Added
+
+- **Configuration battery wired into repository assessments.** The four repository-scoped
+  Configuration checks (ACT-WEB-CONFIG-001, ACT-WEB-COMPLIANCE-001, ACT-WEB-LOGANALYSIS-001,
+  ACT-WEB-BASELINE-001) are now composed by the launcher and listed in the check catalog, so a
+  scope that permits the Configuration category actually runs them instead of silently skipping
+  the whole family.
+
+- **Config-driven advisory feed for the dependency audit.** A new
+  `AdvisoryProviderFactory` resolves the operator-configured advisory source (OSV or offline
+  snapshot) from configuration and hands it to the dependency audit. Previously the audit always
+  used the disabled provider, so an enabled feed was never consulted. With none enabled it still
+  degrades to the honest disabled provider.
+
+### Fixed
+
+- **Repository checks no longer scan dependencies or build output.** The Configuration checks
+  used raw recursive file enumeration that descended into node_modules, dist, and other
+  generated trees, producing findings against third-party and build artifacts. They now share a
+  scanner that honors the canonical ignored-directory set, matching the behavior already applied
+  to source and dependency analysis.
+
+- **Configuration audit no longer flags template placeholders.** Secret-manager placeholders
+  (e.g. __set_in_secrets_manager__, ${...} references, changeme tokens) and comment lines are
+  recognized and skipped, so template environment files no longer flood reports with false
+  positives while genuine hardcoded credentials are still detected.
+
+- **Generic secret rule no longer flags code references or test fixtures.** The
+  SRC-SECRET-002 rule previously reported template-literal interpolations (`token=${...}`),
+  environment references, and high-entropy test fixtures as probable secrets. It now rejects
+  values that are clearly code references and skips conventional test files (`*_test.go`,
+  `*.test.ts`, `*.spec.*`, `test_*`, test directories), while still detecting genuine
+  high-entropy secrets in production code.
+
 ## [0.1.5] - 2026-08-30
 
 ### Added

@@ -103,6 +103,10 @@ public static class CheckRegistry
         var evidence = new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard));
         metadata.Add(new SourceAnalysisCheck(evidence).Metadata);
         metadata.Add(new DependencyAnalysisCheck(DisabledAdvisoryProvider.Instance, evidence).Metadata);
+        metadata.Add(new ConfigurationAuditCheck().Metadata);
+        metadata.Add(new ComplianceCheck(evidence).Metadata);
+        metadata.Add(new LogAnalysisCheck(evidence).Metadata);
+        metadata.Add(new SecurityBaselineCheck(evidence).Metadata);
         return metadata;
     }
 
@@ -112,10 +116,16 @@ public static class CheckRegistry
     /// shipping default) the dependency audit runs against the honest disabled provider, so
     /// results are reported as inconclusive rather than as a clean bill of health.
     /// </summary>
-    public static IReadOnlyList<ISecurityCheck> CreateRepositoryChecks(IEvidenceFactory evidence) =>
+    public static IReadOnlyList<ISecurityCheck> CreateRepositoryChecks(
+        IEvidenceFactory evidence,
+        ISecurityAdvisoryProvider? advisoryProvider = null) =>
     [
         new SourceAnalysisCheck(evidence),
-        new DependencyAnalysisCheck(DisabledAdvisoryProvider.Instance, evidence)
+        new DependencyAnalysisCheck(advisoryProvider ?? DisabledAdvisoryProvider.Instance, evidence),
+        new ConfigurationAuditCheck(),
+        new ComplianceCheck(evidence),
+        new LogAnalysisCheck(evidence),
+        new SecurityBaselineCheck(evidence)
     ];
 
     private static List<ISecurityCheck> BuildWebChecks() =>
@@ -128,6 +138,14 @@ public static class CheckRegistry
         new TlsRedirectCheck(),
         new MixedContentCheck(),
         new InfoDisclosureCheck(),
-        new CacheControlCheck()
+        new CacheControlCheck(),
+        new SqlInjectionCheck(new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard))),
+        new CrossSiteScriptingCheck(new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard))),
+        new CommandInjectionCheck(new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard))),
+        new PathTraversalCheck(new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard))),
+        new AuthenticationBypassCheck(new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard))),
+        new IdorCheck(new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard))),
+        new OpenRedirectCheck(new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard))),
+        new JwtVulnerabilityCheck(new EvidenceFactory(new StandardEvidenceRedactor(RedactionPolicy.Standard)))
     ];
 }

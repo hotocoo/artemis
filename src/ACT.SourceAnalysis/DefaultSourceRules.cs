@@ -36,7 +36,11 @@ public static class DefaultSourceRules
             MaxMatchesPerFile: 5,
             Pattern: Rx("""(?i)\b(?:password|passwd|secret|api_key|apikey|token)\b"?\s*[:=]\s*"?(?<secret>[^"'\s]{16,})"""),
             MatchValidator: HasSufficientSecretVariety,
-            RedactMatches: true),
+            RedactMatches: true,
+            // Generic credential-assignment is the noisiest secret rule: test fixtures and
+            // throwaway values in *_test / *.spec files flood reports. Recognized-format secrets
+            // (SRC-SECRET-001) still scan test files where real keys are sometimes committed.
+            SkipTestFiles: true),
         new SourceRule(
             RuleId: "SRC-CRYPTO-002",
             Title: "Weak or legacy cryptographic primitive",
@@ -201,6 +205,15 @@ public static class DefaultSourceRules
     /// <summary>Secret candidates must mix at least three character classes to cut false positives.</summary>
     private static bool HasSufficientSecretVariety(string candidate)
     {
+        // Template-literal interpolations and env references are code that resolves to a value,
+        // not a literal secret: token=${...}, SECRET=${ENV_VAR}, etc. Reject them outright.
+        if (candidate.Contains("${") || candidate.Contains("#{") ||
+            candidate.StartsWith("$", StringComparison.Ordinal) ||
+            candidate.Contains(".env."))
+        {
+            return false;
+        }
+
         var classes = 0;
         if (candidate.Any(char.IsUpper)) classes++;
         if (candidate.Any(char.IsLower)) classes++;

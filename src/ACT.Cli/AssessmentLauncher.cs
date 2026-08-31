@@ -192,7 +192,10 @@ public static class AssessmentLauncher
 
         if (scope.TargetType is TargetTypeKind.LocalSourceRepository or TargetTypeKind.TestEnvironment)
         {
-            checks.AddRange(CheckRegistry.CreateRepositoryChecks(evidenceFactory));
+            // The dependency audit uses the operator-configured advisory feed when one is
+            // enabled; otherwise the registry falls back to the honest disabled provider.
+            var advisoryProvider = services.GetService<ISecurityAdvisoryProvider>();
+            checks.AddRange(CheckRegistry.CreateRepositoryChecks(evidenceFactory, advisoryProvider));
         }
         else
         {

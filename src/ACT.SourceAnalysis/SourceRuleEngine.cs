@@ -31,9 +31,15 @@ public sealed class SourceRuleEngine
         IAsyncEnumerable<FileLine> lines,
         CancellationToken cancellationToken)
     {
+        var isTestFile = IsTestFile(file.RelativePath);
         var applicable = new List<SourceRule>();
         foreach (var rule in _rules)
         {
+            if (rule.SkipTestFiles && isTestFile)
+            {
+                continue;
+            }
+
             if (rule.Languages is null || rule.Languages.Count == 0 || rule.Languages.Contains(file.Language))
             {
                 applicable.Add(rule);
@@ -95,6 +101,58 @@ public sealed class SourceRuleEngine
         }
 
         return new RuleScanResult(matches, timedOut.ToArray());
+    }
+
+    /// <summary>
+    /// True when a file path matches conventional test-file naming across ecosystems. Generic
+    /// secret rules skip these to avoid fixture noise; recognized-format secret rules still run.
+    /// </summary>
+    public static bool IsTestFile(string relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath)) return false;
+
+        var fileName = Path.GetFileName(relativePath);
+        var lower = fileName.ToLowerInvariant();
+
+        // Suffix-based: *_test.go, *_test.py, *Test.cs, *Tests.cs, *Test.java, *_test.rs, ...
+        if (lower.EndsWith("_test.go") || lower.EndsWith("_test.py") || lower.EndsWith("_test.rs") ||
+            lower.EndsWith("_test.java") || lower.EndsWith("_test.cpp") || lower.EndsWith("_test.cc") ||
+            lower.EndsWith("_test.c") || lower.EndsWith("test.go") || lower.EndsWith("test.py"))
+        {
+            return true;
+        }
+
+        if (lower.EndsWith("test.cs") || lower.EndsWith("tests.cs") ||
+            lower.EndsWith("test.csx") || lower.EndsWith("tests.csx"))
+        {
+            return true;
+        }
+
+        // Prefix-based: test_*.py, test_*.go, test_*.js
+        if (lower.StartsWith("test_"))
+        {
+            return true;
+        }
+
+        // JS/TS/Jest/Vitest conventions: *.test.*, *.spec.*
+        if (lower.Contains(".test.") || lower.Contains(".spec."))
+        {
+            return true;
+        }
+
+        // Directory-based: files under a dedicated tests/test/spec directory.
+        var separators = new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
+        var segments = relativePath.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var segment in segments)
+        {
+            var segLower = segment.ToLowerInvariant();
+            if (segLower is "test" or "tests" or "spec" or "specs" or "__tests__")
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 

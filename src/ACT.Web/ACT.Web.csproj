@@ -2,5 +2,6 @@
   <ItemGroup>
     <ProjectReference Include="../ACT.Contracts/ACT.Contracts.csproj" />
     <ProjectReference Include="../ACT.Network/ACT.Network.csproj" />
+    <ProjectReference Include="../ACT.SourceAnalysis/ACT.SourceAnalysis.csproj" />
   </ItemGroup>
 </Project>

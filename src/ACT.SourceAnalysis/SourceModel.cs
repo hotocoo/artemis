@@ -92,7 +92,8 @@ public sealed record SourceRule(
     int MaxMatchesPerFile,
     System.Text.RegularExpressions.Regex Pattern,
     bool RedactMatches = false,
-    Func<string, bool>? MatchValidator = null);
+    Func<string, bool>? MatchValidator = null,
+    bool SkipTestFiles = false);
 
 /// <summary>One numbered line produced by lazy, encoding-tolerant streaming of a source file.</summary>
 public readonly record struct FileLine(int Number, string Text);
