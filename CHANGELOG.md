@@ -62,6 +62,18 @@ a version bump commits to; the product version itself lives once in
   check now confirms with a natural negotiation and skips the verdict when the runtime itself
   lacks TLS 1.3 support, instead of blaming the server.
 
+### Added
+
+- **Actionable remediation guidance on every source finding.** Each built-in source rule now
+  carries concrete remediation steps and authoritative references (CWE, OWASP, RFC, NIST) instead
+  of a one-line summary, so findings and reports tell operators exactly how to fix the issue.
+  Reports render the steps and a prioritized remediation plan.
+
+- **Workflow lifecycle end-to-end demonstration.** A new `e2e/workflow_lifecycle_demo.sh` script
+  walks the complete Artemis assessment lifecycle against a self-contained fixture - scope,
+  assess, findings, triage, baseline, drift comparison, and report - using only
+  audit/assessment capabilities, as a repeatable reference for operators and CI.
+
 ## [0.1.5] - 2026-08-30
 
 ### Added
