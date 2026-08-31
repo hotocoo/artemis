@@ -33,6 +33,12 @@ public sealed class ProtocolVersionsCheck : ISecurityCheck
 
     private readonly TlsServices _services;
 
+    /// <summary>
+    /// Test seam: when set, overrides the platform TLS 1.3 support probe so unit tests can
+    /// exercise both branches deterministically regardless of the host runtime.
+    /// </summary>
+    internal bool? Tls13RuntimeUnsupportedOverride { get; set; }
+
     /// <summary>Initializes the check and fails closed when its dependencies are missing.</summary>
     public ProtocolVersionsCheck(TlsServices services)
     {
@@ -47,6 +53,14 @@ public sealed class ProtocolVersionsCheck : ISecurityCheck
 
     /// <summary>Metadata without constructing probe dependencies; used by the check catalog.</summary>
     public static SecurityCheckMetadata Describe() => s_metadata;
+
+    /// <summary>
+    /// True when the current runtime cannot complete TLS 1.3 handshakes at all, so a failed
+    /// forced TLS 1.3 probe is a platform limitation rather than evidence about the server.
+    /// .NET on macOS is the known case; the probe is verified empirically so the list can grow.
+    /// </summary>
+    private bool Tls13RuntimeUnsupported() =>
+        Tls13RuntimeUnsupportedOverride ?? OperatingSystem.IsMacOS();
 
     /// <inheritdoc />
     public async Task<SecurityCheckResult> ExecuteAsync(SecurityCheckContext context, CancellationToken cancellationToken)
@@ -82,7 +96,40 @@ public sealed class ProtocolVersionsCheck : ISecurityCheck
 #pragma warning disable SYSLIB0039 // Capability detection must reference the legacy constants the target may still accept.
         var deprecatedAccepted = accepted.Contains(SslProtocols.Tls) || accepted.Contains(SslProtocols.Tls11);
         var tls12Missing = !accepted.Contains(SslProtocols.Tls12);
-        var tls13Missing = !accepted.Contains(SslProtocols.Tls13);
+
+        // Some platforms (notably .NET on macOS) cannot force a TLS 1.3-only handshake even when
+        // the server supports it, so the forced probe alone would report a false "TLS 1.3 not
+        // offered". When the forced probe fails, confirm with a natural negotiation: if the server
+        // negotiates TLS 1.3 on its own, it clearly offers it and the forced-probe failure is a
+        // platform limitation, not a server one.
+        var tls13Offered = accepted.Contains(SslProtocols.Tls13);
+        // On some platforms (notably .NET on macOS) the runtime cannot complete a TLS 1.3
+        // handshake at all - neither forced nor naturally - so a failed TLS 1.3 probe proves
+        // nothing about the server. Confirm with a natural negotiation first: if the server
+        // negotiates TLS 1.3 on its own it clearly offers it. If even that cannot yield 1.3 on a
+        // platform known to lack 1.3 support, skip the verdict honestly instead of emitting a
+        // false "not offered" finding.
+        bool? tls13Reliable = true;
+        if (!tls13Offered)
+        {
+            try
+            {
+                var natural = await _services.Probe.ProbeNaturalAsync(host, port, cancellationToken).ConfigureAwait(false);
+                if (natural.HandshakeSucceeded && natural.NegotiatedProtocol == SslProtocols.Tls13)
+                {
+                    tls13Offered = true;
+                }
+                else if (Tls13RuntimeUnsupported())
+                {
+                    tls13Reliable = false;
+                }
+            }
+            catch (Exception ex) when (ex is AuthenticationException or IOException or PlatformNotSupportedException)
+            {
+                tls13Reliable = Tls13RuntimeUnsupported() ? false : tls13Reliable;
+            }
+        }
+        var tls13Missing = !tls13Offered && tls13Reliable == true;
 #pragma warning restore SYSLIB0039
 
         var findings = new List<Finding>();

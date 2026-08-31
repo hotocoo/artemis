@@ -1,0 +1,21 @@
+{
+  "scopeId": "521C0FFD-2CDC-4809-B507-B402C5B955D7",
+  "assessmentId": "02F5E2EE-6BB4-42FE-A11E-D84184DEDF02",
+  "operatorIdentity": "acotech (security team)",
+  "organization": "Local Dev Security",
+  "targetType": "Url",
+  "allowlistedTargets": ["https://www.google.com"],
+  "excludedTargets": [],
+  "permittedProtocols": ["https"],
+  "permittedPorts": ["443"],
+  "requestsPerSecond": 2,
+  "concurrencyLimit": 1,
+  "maxRuntimeSeconds": 180,
+  "maxRequests": 40,
+  "allowedCategories": ["Network", "Tls", "Http"],
+  "prohibitedCategories": [],
+  "emergencyStopEnabled": true,
+  "evidenceRetentionDays": 30,
+  "redactionPolicy": "Standard",
+  "authorizationStatement": "I confirm this is a lightweight, read-only defensive TLS/HTTP security-header assessment of a public website at a minimal rate, as explicitly requested."
+}

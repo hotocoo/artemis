@@ -3,4 +3,7 @@
     <ProjectReference Include="../ACT.Contracts/ACT.Contracts.csproj" />
     <ProjectReference Include="../ACT.Network/ACT.Network.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ACT.Tests" />
+  </ItemGroup>
 </Project>

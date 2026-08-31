@@ -1,0 +1,21 @@
+{
+  "scopeId": "344A2DDC-6800-4A2E-946A-A7CF855AA3F2",
+  "assessmentId": "D7124CBB-A963-40C7-BC3D-0A3524AA3020",
+  "operatorIdentity": "acotech (security team)",
+  "organization": "Local Dev Security",
+  "targetType": "LocalSourceRepository",
+  "allowlistedTargets": ["/Users/acotech/workspace/lethe"],
+  "excludedTargets": [],
+  "permittedProtocols": [],
+  "permittedPorts": [],
+  "requestsPerSecond": 5,
+  "concurrencyLimit": 2,
+  "maxRuntimeSeconds": 3600,
+  "maxRequests": 2000,
+  "allowedCategories": ["Source", "Dependency", "Configuration"],
+  "prohibitedCategories": [],
+  "emergencyStopEnabled": true,
+  "evidenceRetentionDays": 30,
+  "redactionPolicy": "Standard",
+  "authorizationStatement": "I confirm I own and am authorized to assess this local source repository."
+}

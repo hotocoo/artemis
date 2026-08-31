@@ -202,6 +202,15 @@ public static class DefaultSourceRules
             Pattern: Rx("""(?i)SSL_set_verify\s*\([^)]*SSL_VERIFY_NONE""", """(?i)CURLOPT_SSL_VERIFYPEER\s*[)]*\s*=\s*0""", """(?i)CURLOPT_SSL_VERIFYHOST\s*[)]*\s*=\s*0""", """(?i)SSL_CTX_set_verify\s*\([^)]*SSL_VERIFY_NONE""")),
     ];
 
+    /// <summary>
+    /// Matches a pure dotted identifier (e.g. pass.stringValue) whose segments contain only
+    /// letters and underscores. Such values are property/method accesses in code, never literal
+    /// secrets; real secrets and tokens carry digits or base64 characters in their segments.
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex CodeIdentifierPattern =
+        new("^[A-Za-z_][A-Za-z_]*(\\.[A-Za-z_][A-Za-z_]*)+$",
+            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     /// <summary>Secret candidates must mix at least three character classes to cut false positives.</summary>
     private static bool HasSufficientSecretVariety(string candidate)
     {
@@ -210,6 +219,21 @@ public static class DefaultSourceRules
         if (candidate.Contains("${") || candidate.Contains("#{") ||
             candidate.StartsWith("$", StringComparison.Ordinal) ||
             candidate.Contains(".env."))
+        {
+            return false;
+        }
+
+        // Function calls / expressions are code, not secrets: trimCopy(...), substr(pos, ...).
+        // A genuine secret never contains call parentheses.
+        if (candidate.Contains('(') || candidate.Contains(')'))
+        {
+            return false;
+        }
+
+        // Dotted identifiers made of pure identifiers (pass.stringValue, foo.bar) are property or
+        // method accesses, not literal secrets. Real secrets and JWTs contain digits or base64
+        // characters, so this conservative shape never shadows them.
+        if (CodeIdentifierPattern.IsMatch(candidate))
         {
             return false;
         }

@@ -136,6 +136,9 @@ public sealed record SymlinkEscapeObservation(string LinkPath, string ResolvedTa
 /// <summary>A file skipped because it exceeded the configured per-file size cap.</summary>
 public sealed record OversizedFileSkipped(string RelativePath, long SizeBytes) : RepositoryWalkEntry;
 
+/// <summary>A file skipped because its content is binary (never meaningfully matched by text rules).</summary>
+public sealed record BinaryFileSkipped(string RelativePath) : RepositoryWalkEntry;
+
 /// <summary>Terminal notice emitted when the per-run file cap stopped the walk early.</summary>
 public sealed record ScanLimitReached(string Reason) : RepositoryWalkEntry;
 
@@ -144,6 +147,7 @@ public sealed class RepositoryWalkCounters
 {
     private long _filesDiscovered;
     private long _oversizedFilesSkipped;
+    private long _binaryFilesSkipped;
     private long _symlinkEscapesSkipped;
     private long _ioErrorsSkipped;
     private long _depthLimitedDirectories;
@@ -155,6 +159,9 @@ public sealed class RepositoryWalkCounters
 
     /// <summary>Records one oversize skip.</summary>
     public void IncrementOversizedFiles() => Interlocked.Increment(ref _oversizedFilesSkipped);
+
+    /// <summary>Records one binary-file skip.</summary>
+    public void IncrementBinaryFiles() => Interlocked.Increment(ref _binaryFilesSkipped);
 
     /// <summary>Records one symlink-escape skip.</summary>
     public void IncrementSymlinkEscapes() => Interlocked.Increment(ref _symlinkEscapesSkipped);

@@ -161,6 +161,16 @@ public sealed class RepositoryWalker
                     continue;
                 }
 
+                // Binary files (compiled frameworks, images, packs, archives) are never
+                // meaningfully matched by text rules; scanning them only yields false
+                // positives. Probe the leading bytes and skip them honestly.
+                if (IsBinaryFile(fileInfo.FullName))
+                {
+                    Counters.IncrementBinaryFiles();
+                    yield return new BinaryFileSkipped(childRelative);
+                    continue;
+                }
+
                 if (filesEmitted >= Limits.MaxFilesPerRun)
                 {
                     Counters.MarkFileLimitReached();
@@ -178,6 +188,63 @@ public sealed class RepositoryWalker
                     length));
             }
         }
+    }
+
+    /// <summary>Leading-byte sample size used to classify a file as binary or text.</summary>
+    private const int BinaryProbeBytes = 8000;
+
+    /// <summary>
+    /// True when a file's leading bytes indicate binary content. A null byte is a definitive
+    /// marker; otherwise a control-byte ratio above 1% of the sample indicates binary data.
+    /// Valid UTF-8 multibyte text uses bytes &gt;= 128 and is never flagged. Unreadable files
+    /// return false so the normal IO-error path handles them.
+    /// </summary>
+    public static bool IsBinaryFile(string fullPath)
+    {
+        byte[] buffer;
+        try
+        {
+            using var stream = new FileStream(
+                fullPath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                bufferSize: BinaryProbeBytes, FileOptions.SequentialScan);
+            var toRead = (int)Math.Min(BinaryProbeBytes, stream.Length);
+            if (toRead <= 0)
+            {
+                return false;
+            }
+            buffer = new byte[toRead];
+            var read = 0;
+            while (read < toRead)
+            {
+                var n = stream.Read(buffer, read, toRead - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            if (read <= 0)
+            {
+                return false;
+            }
+            Array.Resize(ref buffer, read);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+
+        var controlBytes = 0;
+        foreach (var b in buffer)
+        {
+            if (b == 0)
+            {
+                return true;
+            }
+            if (b < 9 || (b > 13 && b < 32))
+            {
+                controlBytes++;
+            }
+        }
+
+        return controlBytes > buffer.Length / 100;
     }
 
     private LinkResolution ResolveWithinRoot(FileSystemInfo info, HashSet<string> visitedTargets)

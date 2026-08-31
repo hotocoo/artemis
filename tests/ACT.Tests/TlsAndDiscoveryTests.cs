@@ -242,12 +242,17 @@ public class TlsDiscTests
     {
         public SecurityCheckContext Context { get; init; } = null!;
         public FakeTlsProbe Probe { get; init; } = new();
+        public bool? Tls13RuntimeUnsupportedOverride { get; set; }
 
         public Task<SecurityCheckResult> RunCertificate() =>
             new CertificateTrustCheck(NewServices()).ExecuteAsync(Context, CancellationToken.None);
 
-        public Task<SecurityCheckResult> RunProtocol() =>
-            new ProtocolVersionsCheck(NewServices()).ExecuteAsync(Context, CancellationToken.None);
+        public Task<SecurityCheckResult> RunProtocol()
+        {
+            var check = new ProtocolVersionsCheck(NewServices());
+            check.Tls13RuntimeUnsupportedOverride = Tls13RuntimeUnsupportedOverride;
+            return check.ExecuteAsync(Context, CancellationToken.None);
+        }
 
         public Task<SecurityCheckResult> RunCipher() =>
             new CipherSuiteCheck(NewServices()).ExecuteAsync(Context, CancellationToken.None);
@@ -547,6 +552,12 @@ public class TlsDiscTests
     {
         var fixture = NewTls();
         fixture.Probe.AcceptedVersions = [SslProtocols.Tls, SslProtocols.Tls11];
+        // The server genuinely lacks TLS 1.3: natural negotiation falls back to TLS 1.2, and the
+        // runtime can force versions (override=false), so the "not offered" verdict is reliable.
+        fixture.Probe.NaturalResult = new TlsProbeResult(
+            "lab.target", 8443, true, SslProtocols.Tls12, "TLS_AES_128_GCM_SHA256", 128, null, [], [],
+            TimeSpan.FromMilliseconds(10), null);
+        fixture.Tls13RuntimeUnsupportedOverride = false;
 
         var result = await fixture.RunProtocol();
 
@@ -560,6 +571,24 @@ public class TlsDiscTests
         Assert.Equal(Severity.Critical, missing12!.TechnicalSeverity);
         Assert.Equal(Severity.Low, missing13!.TechnicalSeverity);
         Assert.Equal(VersionProbeRequestCount, result.RequestCount);
+    }
+
+    [Fact]
+    public async Task Protocol_Tls13ProbeFailsOnUnsupportedRuntime_SkipsVerdictHonestly()
+    {
+        // On runtimes that cannot complete TLS 1.3 handshakes (e.g. .NET on macOS), a failed
+        // forced TLS 1.3 probe must not emit a false "not offered" finding even when the server
+        // genuinely supports it.
+        var fixture = NewTls();
+        fixture.Probe.AcceptedVersions = [SslProtocols.Tls12];
+        fixture.Probe.NaturalResult = new TlsProbeResult(
+            "lab.target", 8443, true, SslProtocols.Tls12, "TLS_AES_128_GCM_SHA256", 128, null, [], [],
+            TimeSpan.FromMilliseconds(10), null);
+        fixture.Tls13RuntimeUnsupportedOverride = true;
+
+        var result = await fixture.RunProtocol();
+
+        Assert.Null(ByTitle(result, "TLS 1.3 not offered"));
     }
 
     [Fact]

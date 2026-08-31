@@ -44,6 +44,24 @@ a version bump commits to; the product version itself lives once in
   `*.test.ts`, `*.spec.*`, `test_*`, test directories), while still detecting genuine
   high-entropy secrets in production code.
 
+- **Source walk skips binary files.** The repository walker previously read every file as UTF-8
+  text, so compiled frameworks, images, and resource packs (e.g. Chromium `locale.pak`) produced
+  secret-rule false positives from binary bytes. Files are now probed for null bytes and a
+  control-byte ratio and skipped honestly when they are binary, while valid UTF-8 multibyte text
+  (CJK, emoji) is still analyzed.
+
+- **Generic secret rule no longer flags code expressions.** SRC-SECRET-002 previously reported
+  function calls and property accesses assigned to credential-like names (e.g.
+  `token = trimCopy(value.substr(pos,`, `password:pass.stringValue`) as probable secrets. It now
+  rejects values containing call parentheses and pure dotted identifiers, while still detecting
+  genuine high-entropy literals.
+
+- **TLS 1.3 verdict is honest on runtimes that cannot negotiate it.** On platforms where the
+  .NET runtime cannot complete TLS 1.3 handshakes (notably macOS), a failed forced TLS 1.3 probe
+  previously produced a false "TLS 1.3 not offered" finding even when the server offered it. The
+  check now confirms with a natural negotiation and skips the verdict when the runtime itself
+  lacks TLS 1.3 support, instead of blaming the server.
+
 ## [0.1.5] - 2026-08-30
 
 ### Added
