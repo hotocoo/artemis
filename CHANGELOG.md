@@ -151,6 +151,19 @@ a version bump commits to; the product version itself lives once in
   theory under `LanguageDetection_RecognizesContainerfile` pins every variant
   (case-insensitive, suffixed, and embedded in a multi-segment filename).
 
+- **Test-file detection recognizes Kotlin and Swift conventions.** `IsTestFile`
+  matched the suffix conventions for Go, Python, Java, Rust, C/C++, and the
+  C# / JS / TS families, but every Kotlin `*Test.kt` / `*Tests.kt` / `*Spec.kt`
+  (JUnit and Spek) and every Swift `*Tests.swift` / `*Spec.swift` (XCTest and
+  Quick) walked past the filter. For repos where the generic credential rule
+  was the only thing standing between a real fixture and a false positive,
+  this let `password = Xk9#mQ2vL8@nR5tWz3pYb` slip past unflagged inside `AuthServiceTest.kt`
+  while the equivalent `AuthServiceTests.swift` value produced no skip either.
+  The detector now matches `*Test.kt`, `*Tests.kt`, `*Spec.kt`, `*Tests.swift`,
+  and `*Spec.swift` under the same test-file umbrella. Five new
+  `InlineData` cases under `IsTestFile_DetectsConventionalTestPaths` pin the
+  three Kotlin forms and the two Swift forms.
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now

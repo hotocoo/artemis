@@ -61,6 +61,13 @@ public class SourceRuleFalsePositiveTests
     [InlineData("src/ProgramTests.cs")]
     [InlineData("src/__tests__/auth.test.js")]
     [InlineData("src/test_helpers.py")]
+    // Kotlin: JUnit (*Test / *Tests) and Spek (*Spec) conventions.
+    [InlineData("app/src/test/kotlin/AuthServiceTest.kt")]
+    [InlineData("app/src/test/kotlin/AuthServiceTests.kt")]
+    [InlineData("app/src/test/kotlin/AuthServiceSpec.kt")]
+    // Swift: XCTest (*Tests) and Quick (*Spec) conventions.
+    [InlineData("Tests/AuthServiceTests.swift")]
+    [InlineData("Spec/AuthServiceSpec.swift")]
     public void IsTestFile_DetectsConventionalTestPaths(string path)
     {
         Assert.True(SourceRuleEngine.IsTestFile(path), "Expected test file: " + path);

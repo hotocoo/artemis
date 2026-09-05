@@ -128,6 +128,18 @@ public sealed class SourceRuleEngine
             return true;
         }
 
+        // Kotlin: JUnit's *Test / *Tests, Spek's *Spec.
+        if (lower.EndsWith("test.kt") || lower.EndsWith("tests.kt") || lower.EndsWith("spec.kt"))
+        {
+            return true;
+        }
+
+        // Swift: XCTest's *Tests, Quick's *Spec.
+        if (lower.EndsWith("tests.swift") || lower.EndsWith("spec.swift"))
+        {
+            return true;
+        }
+
         // Prefix-based: test_*.py, test_*.go, test_*.js
         if (lower.StartsWith("test_"))
         {
