@@ -13,8 +13,10 @@ public sealed record DependencyRemediationResult(
 
 /// <summary>
 /// Fixes vulnerable dependencies on the spot by updating the pinned version in the source
-/// manifest to the advisory's fixed version. Supports NuGet, npm, PyPI, and Cargo manifests.
-/// The change is a surgical, single-package edit that preserves the rest of the manifest.
+/// manifest to the advisory's fixed version. Supports NuGet, npm, PyPI, Cargo, and Maven
+/// manifests. The change is a surgical, single-package edit that preserves the rest of the
+/// manifest; formats the engine cannot confidently edit are reported as not updated rather
+/// than rewritten blindly.
 /// </summary>
 public static class DependencyRemediator
 {
@@ -64,6 +66,10 @@ public static class DependencyRemediator
         {
             return RewriteCsproj(content, packageName, newVersion);
         }
+        if (LooksLikePomXml(content))
+        {
+            return RewritePomXml(content, packageName, newVersion);
+        }
         if (LooksLikeRequirementsTxt(content))
         {
             return RewriteRequirementsTxt(content, packageName, newVersion);
@@ -78,6 +84,10 @@ public static class DependencyRemediator
     private static bool LooksLikeCsproj(string content) =>
         content.Contains("<Project", StringComparison.OrdinalIgnoreCase) &&
         content.Contains("PackageReference", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LooksLikePomXml(string content) =>
+        content.Contains("<project", StringComparison.OrdinalIgnoreCase) &&
+        content.Contains("<dependency>", StringComparison.OrdinalIgnoreCase);
 
     private static bool LooksLikeRequirementsTxt(string content) =>
         content.Split('\n').Any(l => l.Trim().Contains("==") && !l.TrimStart().StartsWith("#"));
@@ -140,6 +150,88 @@ public static class DependencyRemediator
         }
 
         return found ? (string.Join("\n", lines), previous) : (null, previous);
+    }
+
+    // pom.xml: <dependency><groupId>group</groupId><artifactId>artifact</artifactId><version>old</version></dependency>
+    // packageName arrives as "groupId:artifactId". Find the matching dependency element and rewrite
+    // its <version>OLD</version> child in place; the rest of the file is untouched. Dependencies
+    // inside <dependencyManagement> are deliberately skipped so the rewriter never silently
+    // changes the central pin for every transitive consumer.
+    private static (string?, string?) RewritePomXml(string content, string packageName, string newVersion)
+    {
+        var separatorIndex = packageName.IndexOf(':');
+        if (separatorIndex <= 0 || separatorIndex == packageName.Length - 1)
+        {
+            return (null, null);
+        }
+
+        var groupId = packageName[..separatorIndex];
+        var artifactId = packageName[(separatorIndex + 1)..];
+
+        var groupIdStart = content.IndexOf("<groupId>", StringComparison.OrdinalIgnoreCase);
+        while (groupIdStart >= 0)
+        {
+            var groupIdOpenEnd = groupIdStart + "<groupId>".Length;
+            var groupIdCloseStart = content.IndexOf("</groupId>", groupIdOpenEnd, StringComparison.OrdinalIgnoreCase);
+            if (groupIdCloseStart < 0)
+            {
+                return (null, null);
+            }
+
+            var actualGroupId = content[groupIdOpenEnd..groupIdCloseStart];
+            if (string.Equals(actualGroupId, groupId, StringComparison.Ordinal))
+            {
+                var depOpen = content.LastIndexOf("<dependency>", groupIdStart, StringComparison.OrdinalIgnoreCase);
+                var depClose = content.IndexOf("</dependency>", groupIdCloseStart, StringComparison.OrdinalIgnoreCase);
+                if (depOpen < 0 || depClose < 0)
+                {
+                    return (null, null);
+                }
+
+                // A dependency that lives inside <dependencyManagement> sets the central pin for
+                // every consumer. Touching it would silently change versions across the project,
+                // so we deliberately leave managed entries alone and prefer the first literal
+                // <version> in the project's <dependencies> block.
+                var depMgmtOpen = content.LastIndexOf("<dependencyManagement>", depOpen, StringComparison.OrdinalIgnoreCase);
+                var depMgmtClose = content.LastIndexOf("</dependencyManagement>", depOpen, StringComparison.OrdinalIgnoreCase);
+                if (depMgmtOpen > depMgmtClose)
+                {
+                    groupIdStart = content.IndexOf("<groupId>", groupIdCloseStart, StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+
+                var dependencyBlock = content.Substring(depOpen, depClose - depOpen + "</dependency>".Length);
+                var artifactIdNeedle = "<artifactId>" + artifactId + "</artifactId>";
+                if (dependencyBlock.IndexOf(artifactIdNeedle, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    // Group matched a different dependency; keep scanning in case the same groupId
+                    // appears for multiple artifacts.
+                    groupIdStart = content.IndexOf("<groupId>", groupIdCloseStart, StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+
+                var versionMatch = Regex.Match(dependencyBlock, "<version>([^<]*)</version>", RegexOptions.IgnoreCase);
+                if (!versionMatch.Success)
+                {
+                    // This dependency has no literal <version> child to rewrite; it relies on
+                    // <dependencyManagement> or a property reference. Continue scanning for a
+                    // literal to upgrade; if none exists we fail closed below.
+                    groupIdStart = content.IndexOf("<groupId>", groupIdCloseStart, StringComparison.OrdinalIgnoreCase);
+                    continue;
+                }
+
+                var previousVersion = versionMatch.Groups[1].Value;
+                var updatedBlock = dependencyBlock[..versionMatch.Index]
+                                   + "<version>" + newVersion + "</version>"
+                                   + dependencyBlock[(versionMatch.Index + versionMatch.Length)..];
+                var newContent = content[..depOpen] + updatedBlock + content[(depOpen + dependencyBlock.Length)..];
+                return (newContent, previousVersion);
+            }
+
+            groupIdStart = content.IndexOf("<groupId>", groupIdCloseStart, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return (null, null);
     }
 
     // Cargo.toml: name = "old" under [dependencies]

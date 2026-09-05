@@ -84,6 +84,18 @@ a version bump commits to; the product version itself lives once in
   block (e.g. `id "..." version "..."` plugin declarations) are not misread as dependency
   coordinates.
 
+- **Dependency remediation now upgrades Maven pom.xml dependencies on the spot.** The
+  `DependencyRemediator` previously only rewrote NuGet, npm, PyPI, and Cargo manifests, so
+  `artemis remediate FINDING_ID` against a Maven project reported `Failed` even though the
+  parser and advisory matcher already worked. A new `RewritePomXml` path finds the matching
+  `<dependency>` block by `groupId` + `artifactId`, disambiguates between sibling
+  dependencies that share a groupId (Spring publishes many under one org), prefers the
+  literal `<version>` over `<dependencyManagement>` pins (so the central pin is never silently
+  changed), and fails closed when the requested dependency has no literal `<version>` child
+  to rewrite. Four new facts under `DependencyRemediatorTests` cover the happy path, the
+  same-group-different-artifact disambiguation, the all-managed fail-closed case, and the
+  literal-over-managed preference.
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now

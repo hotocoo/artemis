@@ -307,6 +307,179 @@ public sealed class DependencyRemediatorTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public async Task UpdateVersionAsync_updates_pom_xml()
+    {
+        // The dependency's <version> child is rewritten in place; surrounding elements and
+        // sibling dependencies stay byte-identical.
+        var pom = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <project xmlns="http://maven.apache.org/POM/4.0.0">
+                <modelVersion>4.0.0</modelVersion>
+                <groupId>com.example</groupId>
+                <artifactId>my-app</artifactId>
+                <version>1.0.0</version>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.springframework</groupId>
+                        <artifactId>spring-core</artifactId>
+                        <version>5.3.20</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>com.google.guava</groupId>
+                        <artifactId>guava</artifactId>
+                        <version>31.1-jre</version>
+                    </dependency>
+                </dependencies>
+            </project>
+            """;
+        var path = TempFile(pom);
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "org.springframework:spring-core", "5.3.25", CancellationToken.None);
+
+            Assert.True(result.Updated);
+            Assert.Equal("5.3.20", result.PreviousVersion);
+            Assert.Equal("5.3.25", result.NewVersion);
+
+            var content = File.ReadAllText(path);
+            Assert.Contains("<version>5.3.25</version>", content);
+            Assert.DoesNotContain("<version>5.3.20</version>", content);
+            // Sibling dependency untouched.
+            Assert.Contains("<version>31.1-jre</version>", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_pom_xml_disambiguates_same_group_different_artifact()
+    {
+        // Spring publishes many artifacts under the same org.springframework group; the rewriter
+        // must update only the requested artifactId, not every dependency that shares its groupId.
+        var pom = """
+            <project>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.springframework</groupId>
+                        <artifactId>spring-core</artifactId>
+                        <version>5.3.20</version>
+                    </dependency>
+                    <dependency>
+                        <groupId>org.springframework</groupId>
+                        <artifactId>spring-context</artifactId>
+                        <version>5.3.20</version>
+                    </dependency>
+                </dependencies>
+            </project>
+            """;
+        var path = TempFile(pom);
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "org.springframework:spring-core", "5.3.25", CancellationToken.None);
+
+            Assert.True(result.Updated);
+            var content = File.ReadAllText(path);
+            // Whitespace is normalized to a single space so the test is robust to raw-string
+            // indentation in either direction of the rewrite.
+            var normalized = System.Text.RegularExpressions.Regex.Replace(content, "\\s+", " ");
+            Assert.Contains("<artifactId>spring-core</artifactId> <version>5.3.25</version>", normalized);
+            Assert.Contains("<artifactId>spring-context</artifactId> <version>5.3.20</version>", normalized);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_pom_xml_fails_closed_when_all_versions_are_managed()
+    {
+        // The pom declares the pin in <dependencyManagement> and uses it without a literal
+        // <version> in <dependencies>. There is no <version>OLD</version> child to rewrite, and
+        // silently bumping the managed pin would change the version for every transitive
+        // consumer; the remediator fails closed instead.
+        var pom = """
+            <project>
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.springframework</groupId>
+                            <artifactId>spring-core</artifactId>
+                            <version>5.3.20</version>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.springframework</groupId>
+                        <artifactId>spring-core</artifactId>
+                    </dependency>
+                </dependencies>
+            </project>
+            """;
+        var path = TempFile(pom);
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "org.springframework:spring-core", "5.3.25", CancellationToken.None);
+
+            Assert.False(result.Updated);
+            var content = File.ReadAllText(path);
+            // The managed version stays pinned for child modules; nothing was fabricated.
+            Assert.Contains("<version>5.3.20</version>", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_pom_xml_prefers_literal_over_managed_match()
+    {
+        // When one dependency in the file declares its version literally and another (with the
+        // same groupId:artifactId) only inherits from <dependencyManagement>, the rewriter must
+        // update the literal one and leave the managed pin alone.
+        var pom = """
+            <project>
+                <dependencyManagement>
+                    <dependencies>
+                        <dependency>
+                            <groupId>org.springframework</groupId>
+                            <artifactId>spring-core</artifactId>
+                            <version>5.3.20</version>
+                        </dependency>
+                    </dependencies>
+                </dependencyManagement>
+                <dependencies>
+                    <dependency>
+                        <groupId>org.springframework</groupId>
+                        <artifactId>spring-core</artifactId>
+                        <version>5.3.18</version>
+                    </dependency>
+                </dependencies>
+            </project>
+            """;
+        var path = TempFile(pom);
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(path, "org.springframework:spring-core", "5.3.25", CancellationToken.None);
+
+            Assert.True(result.Updated);
+            Assert.Equal("5.3.18", result.PreviousVersion);
+            var content = File.ReadAllText(path);
+            // Literal version upgraded; managed pin untouched.
+            Assert.Contains("<version>5.3.25</version>", content);
+            Assert.Contains("<version>5.3.20</version>", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }
 
 /// <summary>
