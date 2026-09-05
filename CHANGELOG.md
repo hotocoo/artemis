@@ -70,6 +70,20 @@ a version bump commits to; the product version itself lives once in
   all three names (case-insensitive), and a new test class asserts the discovery/ecosystem
   contract stays in sync.
 
+- **Dependency audit metadata description no longer claims a four-ecosystem scope.** The check's
+  `SecurityCheckMetadata.Description` field still listed "NuGet, npm, PyPI, and Cargo manifests",
+  which described the pre-0.1.5 state. Catalog renders, surface listings, and operator onboarding
+  now see the accurate list of supported formats (NuGet .csproj / packages.lock.json, npm
+  package-lock.json, PyPI requirements.txt, Cargo Cargo.toml, CMake CMakeLists.txt, Go go.mod,
+  Maven pom.xml, Gradle build.gradle / build.gradle.kts).
+
+- **Gradle parser coverage now exercises Kotlin DSL and double-quoted Groovy forms.** Three new
+  facts under `SrcDepBuildGradleParserTests` confirm that the parser correctly reads
+  `implementation("group:artifact:version")` strings in `build.gradle.kts`, double-quoted
+  `implementation "..."` lines in Groovy DSL, and that lines outside the `dependencies { ... }`
+  block (e.g. `id "..." version "..."` plugin declarations) are not misread as dependency
+  coordinates.
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now

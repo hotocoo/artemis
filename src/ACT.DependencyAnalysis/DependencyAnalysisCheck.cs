@@ -347,7 +347,9 @@ public sealed class DependencyAnalysisCheck : ISecurityCheck
         SupportsRemediation: true,
         SupportsRegressionTest: true,
         Description:
-            "Inventories NuGet, npm, PyPI, and Cargo manifests inside the repository within declared resource limits and " +
+            "Inventories supported dependency manifests (NuGet .csproj / packages.lock.json, npm package-lock.json, " +
+            "PyPI requirements.txt, Cargo Cargo.toml, CMake CMakeLists.txt, Go go.mod, Maven pom.xml, Gradle " +
+            "build.gradle / build.gradle.kts) inside the repository within declared resource limits and " +
             "matches every pinned version against the operator-configured advisory feed.");
 }
 

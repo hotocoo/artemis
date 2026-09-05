@@ -1352,4 +1352,78 @@ public class SrcDepBuildGradleParserTests
         Assert.Equal("org.springframework:spring-core", entry.Name);
         Assert.Null(entry.Version);
     }
+
+    [Fact]
+    public async Task BuildGradle_HandlesDoubleQuotedGroovySyntax()
+    {
+        using var root = new SrcDepTempDir();
+        const string content = """
+            dependencies {
+                implementation "org.springframework:spring-core:5.3.20"
+                testImplementation "junit:junit:4.13.2"
+            }
+            """;
+        var path = root.Write("build.gradle", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        Assert.Equal(DependencyEcosystem.Gradle, manifest.Ecosystem);
+        Assert.Equal(2, manifest.Entries.Count);
+        Assert.Contains(manifest.Entries, e => e.Name == "org.springframework:spring-core" && e.Version == "5.3.20");
+        Assert.Contains(manifest.Entries, e => e.Name == "junit:junit" && e.Version == "4.13.2");
+    }
+
+    [Fact]
+    public async Task BuildGradleKts_ParsesKotlinDslStringForm()
+    {
+        // The Kotlin DSL ("KTS") declares dependencies via string arguments inside parentheses,
+        // a different surface form from the Groovy DSL but the same group:artifact:version triple.
+        using var root = new SrcDepTempDir();
+        const string content = """
+            plugins {
+                kotlin("jvm") version "1.9.20"
+            }
+
+            dependencies {
+                implementation("org.springframework:spring-core:5.3.20")
+                testImplementation("junit:junit:4.13.2")
+            }
+            """;
+        var path = root.Write("build.gradle.kts", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        Assert.Equal(DependencyEcosystem.Gradle, manifest.Ecosystem);
+        Assert.Empty(manifest.ParseIssues);
+        Assert.Equal(2, manifest.Entries.Count);
+        Assert.Contains(manifest.Entries, e => e.Name == "org.springframework:spring-core" && e.Version == "5.3.20" && e.IsDirect);
+        Assert.Contains(manifest.Entries, e => e.Name == "junit:junit" && e.Version == "4.13.2" && e.IsDirect);
+    }
+
+    [Fact]
+    public async Task BuildGradle_SkipsNonImplementationDependencyKeywords()
+    {
+        // Kotlin/Groovy allow arbitrary Gradle configuration blocks; only declared configurations
+        // inside `dependencies { ... }` should produce entries. Lines outside that block, like
+        // plugin DSL declarations, must not be misread as dependency coordinates.
+        using var root = new SrcDepTempDir();
+        const string content = """
+            plugins {
+                id "java"
+                id "org.springframework.boot" version "3.2.0"
+            }
+
+            dependencies {
+                implementation "org.springframework:spring-core:5.3.20"
+            }
+            """;
+        var path = root.Write("build.gradle", content);
+
+        var manifest = await _parser.ParseFileAsync(path, CancellationToken.None);
+
+        var entry = Assert.Single(manifest.Entries);
+        Assert.Equal("org.springframework:spring-core", entry.Name);
+        Assert.Equal("5.3.20", entry.Version);
+        Assert.DoesNotContain(manifest.Entries, e => e.Name == "org.springframework.boot");
+    }
 }
