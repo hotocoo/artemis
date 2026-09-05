@@ -104,6 +104,17 @@ a version bump commits to; the product version itself lives once in
   the require-block path, the single-line require path, `// indirect` preservation, and
   fail-closed behavior when the requested module is absent from the file.
 
+- **CycloneDX SBOM purls use the correct package-url type for every supported ecosystem.**
+  `CycloneDxSbomGenerator` previously emitted `pkg:generic/...` for CMake, Go, Maven, and
+  Gradle dependencies because `EcosystemSegment` only mapped the original four ecosystems.
+  CMake now maps to `pkg:cmake`, Go to `pkg:golang`, and Maven/Gradle to `pkg:maven`
+  (Gradle uses Maven coordinates, so the maven purl type accepts them). The path
+  component is now built per-ecosystem so Maven/Gradle coordinates split `groupId:artifactId`
+  on `:` and rejoin with `/`, and Go import paths preserve their `/` separators rather than
+  having them percent-encoded as `%2F`. Five new facts under `SrcDepSbomTests` pin the
+  resulting purls for each ecosystem and confirm the generic fallback still works for
+  untyped manifests.
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now

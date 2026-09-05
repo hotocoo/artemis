@@ -100,7 +100,32 @@ public static class CycloneDxSbomGenerator
     private static string? BuildPurl(DependencyEcosystem ecosystem, DependencyEntry entry) =>
         entry.Version is null
             ? null
-            : "pkg:" + EcosystemSegment(ecosystem) + "/" + Uri.EscapeDataString(entry.Name) + "@" + Uri.EscapeDataString(entry.Version);
+            : "pkg:" + EcosystemSegment(ecosystem) + "/" + NamePathSegment(ecosystem, entry.Name) + "@" + Uri.EscapeDataString(entry.Version);
+
+    /// <summary>
+    /// Per the package-url specification, the path component is ecosystem-specific:
+    /// Maven and Gradle split groupId:artifactId on ":" and rejoin with "/", Go uses the
+    /// import path verbatim (its "/" separators stay as path delimiters, not percent-encoded),
+    /// and the rest pass the bare name through URI escaping.
+    /// </summary>
+    private static string NamePathSegment(DependencyEcosystem ecosystem, string name)
+    {
+        if (ecosystem is DependencyEcosystem.Maven or DependencyEcosystem.Gradle)
+        {
+            var separator = name.IndexOf(':');
+            if (separator > 0 && separator < name.Length - 1)
+            {
+                return Uri.EscapeDataString(name[..separator]) + "/" + Uri.EscapeDataString(name[(separator + 1)..]);
+            }
+        }
+        if (ecosystem == DependencyEcosystem.Go)
+        {
+            // Uri.EscapeDataString would turn "/" into "%2F", but the Go purl type treats "/"
+            // as a literal path separator throughout the import path.
+            return Uri.EscapeDataString(name).Replace("%2F", "/").Replace("%2f", "/");
+        }
+        return Uri.EscapeDataString(name);
+    }
 
     private static string EcosystemSegment(DependencyEcosystem ecosystem) => ecosystem switch
     {
@@ -108,6 +133,13 @@ public static class CycloneDxSbomGenerator
         DependencyEcosystem.Npm => "npm",
         DependencyEcosystem.PyPi => "pypi",
         DependencyEcosystem.Cargo => "cargo",
+        // CMake declares its own first-class purl type; Maven covers Gradle because Gradle
+        // artifacts use Maven groupId:artifactId coordinates and the Maven purl spec accepts
+        // them; Go uses the golang purl type per the package-url specification.
+        DependencyEcosystem.CMake => "cmake",
+        DependencyEcosystem.Go => "golang",
+        DependencyEcosystem.Maven => "maven",
+        DependencyEcosystem.Gradle => "maven",
         _ => "generic"
     };
 

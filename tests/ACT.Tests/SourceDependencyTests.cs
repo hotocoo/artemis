@@ -749,6 +749,51 @@ public class SrcDepSbomTests
         var sorted = allPurls.OrderBy(static p => p, StringComparer.Ordinal).ToList();
         Assert.Equal(sorted, allPurls);
     }
+
+    [Theory]
+    [InlineData(DependencyEcosystem.CMake, "raylib", "5.5", "pkg:cmake/raylib@5.5")]
+    [InlineData(DependencyEcosystem.Go, "github.com/gin-gonic/gin", "v1.9.1", "pkg:golang/github.com/gin-gonic/gin@v1.9.1")]
+    // Maven and Gradle coordinates are groupId:artifactId; per the purl spec the colon is
+    // replaced with a "/" and each segment is percent-encoded independently.
+    [InlineData(DependencyEcosystem.Maven, "org.springframework:spring-core", "5.3.20", "pkg:maven/org.springframework/spring-core@5.3.20")]
+    [InlineData(DependencyEcosystem.Gradle, "org.springframework:spring-core", "5.3.20", "pkg:maven/org.springframework/spring-core@5.3.20")]
+    public void CycloneDx_PurlUsesSpecEcosystemForEcosystemsAddedIn_0_1_5(
+        DependencyEcosystem ecosystem, string name, string version, string expectedPurl)
+    {
+        // DependencyEntry.Name carries the bare coordinate (Go import path, Maven
+        // groupId:artifactId). BuildPurl percent-encodes it via Uri.EscapeDataString so the
+        // result is round-trippable for downstream purl consumers.
+        var manifest = new DependencyManifest(
+            ecosystem,
+            [new DependencyEntry(name, version, true, "manifest")],
+            []);
+
+        var json = CycloneDxSbomGenerator.ToJson(manifest, "1.0.0");
+        using var doc = JsonDocument.Parse(json);
+        var purls = doc.RootElement.GetProperty("components")
+            .EnumerateArray()
+            .Select(static c => c.GetProperty("purl").GetString())
+            .ToList();
+
+        var purl = Assert.Single(purls);
+        Assert.Equal(expectedPurl, purl);
+    }
+
+    [Fact]
+    public void CycloneDx_PurlFallsBackToGenericWhenEcosystemIsUnknown()
+    {
+        // Unknown is the enum value used for parsed manifests whose ecosystem could not be
+        // classified. The package-url "generic" type is the documented fallback.
+        var manifest = new DependencyManifest(
+            DependencyEcosystem.Unknown,
+            [new DependencyEntry("untyped-pkg", "1.2.3", true, "manifest")],
+            []);
+
+        var json = CycloneDxSbomGenerator.ToJson(manifest, "1.0.0");
+        using var doc = JsonDocument.Parse(json);
+        var purl = doc.RootElement.GetProperty("components")[0].GetProperty("purl").GetString();
+        Assert.Equal("pkg:generic/untyped-pkg@1.2.3", purl);
+    }
 }
 
 
