@@ -32,7 +32,13 @@ public static class SourceLanguageDetector
         var name = Path.GetFileName(fileName);
         if (name.Equals("Dockerfile", StringComparison.OrdinalIgnoreCase)
             || name.StartsWith("Dockerfile.", StringComparison.OrdinalIgnoreCase)
-            || name.EndsWith(".dockerfile", StringComparison.OrdinalIgnoreCase))
+            || name.EndsWith(".dockerfile", StringComparison.OrdinalIgnoreCase)
+            // Containerfile is the OCI-standard alias of Dockerfile (used by Podman, buildah, and
+            // many CI systems). Recognizing it under the same language keeps Dockerfile rules
+            // firing on Containerfile repos without a separate configuration step.
+            || name.Equals("Containerfile", StringComparison.OrdinalIgnoreCase)
+            || name.StartsWith("Containerfile.", StringComparison.OrdinalIgnoreCase)
+            || name.EndsWith(".containerfile", StringComparison.OrdinalIgnoreCase))
         {
             return SourceLanguage.Dockerfile;
         }

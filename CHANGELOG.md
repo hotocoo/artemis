@@ -140,6 +140,17 @@ a version bump commits to; the product version itself lives once in
   wrong-package queries return empty, and that none of the 0.1.5-added ecosystems
   were dropped by the simplification.
 
+- **Source-language detector recognizes Containerfile.** `SourceLanguageDetector`
+  previously only matched `Dockerfile`, `Dockerfile.*`, and `*.dockerfile`,
+  leaving every `Containerfile` (the OCI-standard alias used by Podman, buildah,
+  and many CI systems) classified as `SourceLanguage.Unknown`. Dockerfile
+  rules therefore walked past Containerfile repos on the file-name filter,
+  producing no findings even when the upstream Dockerfile rules would have
+  fired. The detector now recognizes `Containerfile`, `Containerfile.*`, and
+  `*.containerfile` under the same `SourceLanguage.Dockerfile` umbrella. A new
+  theory under `LanguageDetection_RecognizesContainerfile` pins every variant
+  (case-insensitive, suffixed, and embedded in a multi-segment filename).
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now

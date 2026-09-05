@@ -304,6 +304,20 @@ public class SrcDepRepositoryWalkerTests
         Assert.Equal(expected, SourceLanguageDetector.Detect(fileName));
     }
 
+    [Theory]
+    [InlineData("Containerfile")]
+    [InlineData("containerfile")]
+    [InlineData("Containerfile.dev")]
+    [InlineData("Containerfile.prod")]
+    [InlineData("app.Containerfile")]
+    public void LanguageDetection_RecognizesContainerfile(string fileName)
+    {
+        // Containerfile is the OCI-standard alias of Dockerfile (used by Podman, buildah, and
+        // many CI systems). The detector must classify every Containerfile variant as
+        // SourceLanguage.Dockerfile so Dockerfile rules run on Containerfile repos.
+        Assert.Equal(SourceLanguage.Dockerfile, SourceLanguageDetector.Detect(fileName));
+    }
+
     [Fact]
     public async Task PerRunFileCap_EmitsTerminalNotice()
     {
