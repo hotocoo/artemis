@@ -14,6 +14,7 @@ public enum SourceLanguage
     Py,
     Rust,
     Cpp,
+    Go,
     Sql,
     Yaml,
     Json,
@@ -43,6 +44,11 @@ public static class SourceLanguageDetector
             ".js" or ".jsx" or ".mjs" or ".cjs" => SourceLanguage.Js,
             ".py" => SourceLanguage.Py,
             ".rs" => SourceLanguage.Rust,
+            // Go source files were intentionally not recognized before round 6; adding the .go
+            // extension keeps the language classifier consistent with the dependency-analysis
+            // ecosystem (Go modules are inventoried starting in 0.1.5) and clears the way for
+            // Go-targeted source rules to be added on top of the detector.
+            ".go" => SourceLanguage.Go,
             ".cpp" or ".cc" or ".cxx" or ".c++" or ".hpp" or ".hh" or ".hxx" or ".h" or ".c" => SourceLanguage.Cpp,
             ".sql" => SourceLanguage.Sql,
             ".yaml" or ".yml" => SourceLanguage.Yaml,

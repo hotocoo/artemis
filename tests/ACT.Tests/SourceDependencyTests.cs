@@ -292,6 +292,7 @@ public class SrcDepRepositoryWalkerTests
     [InlineData("app.js", SourceLanguage.Js)]
     [InlineData("tool.py", SourceLanguage.Py)]
     [InlineData("lib.rs", SourceLanguage.Rust)]
+    [InlineData("server.go", SourceLanguage.Go)]
     [InlineData("query.sql", SourceLanguage.Sql)]
     [InlineData("cfg.yaml", SourceLanguage.Yaml)]
     [InlineData("data.json", SourceLanguage.Json)]

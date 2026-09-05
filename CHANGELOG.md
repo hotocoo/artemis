@@ -115,6 +115,16 @@ a version bump commits to; the product version itself lives once in
   resulting purls for each ecosystem and confirm the generic fallback still works for
   untyped manifests.
 
+- **Source-language detector recognizes Go source files.** `SourceLanguageDetector` previously
+  classified `*.go` as `SourceLanguage.Unknown`, so the dependency-analysis story
+  (Go modules are inventoried from 0.1.5) and the source-analysis story were out of
+  sync: a repository with a vulnerable `go.mod` would surface findings, while a `.go`
+  file in the same repository would walk past every built-in source rule. The detector
+  now maps `.go` to a new `SourceLanguage.Go` value (slot between `Rust` and `Cpp`),
+  matching the dependency-analysis ecosystem. A new fact under
+  `LanguageDetection_MapsExtensionsExactly` pins the new mapping; future Go-targeted
+  source rules can now opt in to `SourceLanguage.Go` and have it actually run.
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now
