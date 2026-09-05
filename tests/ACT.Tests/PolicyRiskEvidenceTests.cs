@@ -558,6 +558,25 @@ public class PolicyRiskEvidenceTests
         Assert.StartsWith("Set-Cookie: [REDACTED:sha256:", redacted);
     }
 
+    [Theory]
+    [InlineData("X-Auth-Token")]
+    [InlineData("auth-token")]
+    [InlineData("AuthToken")]
+    [InlineData("X-Api-Token")]
+    [InlineData("api-token")]
+    [InlineData("apiToken")]
+    [InlineData("X-CSRF-Token")]
+    [InlineData("csrf_token")]
+    [InlineData("X-XSRF-Token")]
+    public void AuthTokenAndCsrfHeadersAreSensitive(string headerName)
+    {
+        // X-Auth-Token / X-CSRF-Token / X-XSRF-Token / AuthToken are common provider-specific
+        // auth-bearing header names that previously walked past IsSensitiveHeader. Each carries a
+        // bearer-style or CSRF-style credential whose value must be fingerprinted before
+        // persistence, not just left in evidence.
+        Assert.True(Standard().IsSensitiveHeader(headerName));
+    }
+
     [Fact]
     public void PemPrivateKeysAreRedactedEntirely()
     {

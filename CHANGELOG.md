@@ -164,6 +164,21 @@ a version bump commits to; the product version itself lives once in
   `InlineData` cases under `IsTestFile_DetectsConventionalTestPaths` pin the
   three Kotlin forms and the two Swift forms.
 
+- **Sensitive-header detection covers auth-token and CSRF variants.** `IsSensitiveHeader`
+  previously only flagged the standards (Authorization, Proxy-Authorization, Cookie,
+  Set-Cookie) and any header containing `api-key` / `apikey`. That left the long
+  tail of provider-specific auth-bearing headers — `X-Auth-Token`, `AuthToken`,
+  `X-Api-Token`, `X-CSRF-Token`, `X-XSRF-Token` — unredacted, so bearer tokens
+  and CSRF tokens in evidence could land on disk in plaintext. The detector
+  now matches seven additional substrings: `auth-token`, `authtoken`,
+  `api-token`, `apitoken`, `csrf`, `xsrf`. Bare `auth` is intentionally
+  avoided: `Authorization` is already caught by exact match, and
+  `WWW-Authenticate` is a 401 challenge that contains no credential.
+  Nine `InlineData` cases under a new `AuthTokenAndCsrfHeadersAreSensitive`
+  theory pin the variants (including `auth-token`, `AuthToken`,
+  `api-token`, `apiToken`, and underscore-separated forms like
+  `csrf_token`).
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now

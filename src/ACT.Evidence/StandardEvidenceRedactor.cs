@@ -75,9 +75,23 @@ public sealed class StandardEvidenceRedactor : IEvidenceRedactor
     public bool IsSensitiveHeader(string headerName)
     {
         var normalized = headerName.Trim().ToLowerInvariant();
+        // Exact match covers the standards (Authorization, Proxy-Authorization, Cookie,
+        // Set-Cookie). The substring checks cover the long tail of provider-specific
+        // auth-bearing header names (X-Api-Key, X-Auth-Token, X-Api-Token, X-CSRF-Token,
+        // X-XSRF-Token), which would otherwise persist bearer tokens, CSRF tokens, and
+        // session keys unredacted into evidence. normalized is already lower-cased, so the
+        // Ordinal comparison below is effectively case-insensitive against the literal
+        // patterns. Bare "auth" is intentionally avoided: "Authorization" is already caught
+        // by exact match, and "WWW-Authenticate" is a 401 challenge that contains no credential.
         return normalized is "authorization" or "proxy-authorization" or "cookie" or "set-cookie"
             || normalized.Contains("api-key", StringComparison.Ordinal)
-            || normalized.Contains("apikey", StringComparison.Ordinal);
+            || normalized.Contains("apikey", StringComparison.Ordinal)
+            || normalized.Contains("api-token", StringComparison.Ordinal)
+            || normalized.Contains("apitoken", StringComparison.Ordinal)
+            || normalized.Contains("auth-token", StringComparison.Ordinal)
+            || normalized.Contains("authtoken", StringComparison.Ordinal)
+            || normalized.Contains("csrf", StringComparison.Ordinal)
+            || normalized.Contains("xsrf", StringComparison.Ordinal);
     }
 
     /// <inheritdoc />
