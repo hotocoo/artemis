@@ -637,6 +637,56 @@ public class SrcDepRangeAndProviderTests
     }
 
     [Fact]
+    public async Task OfflineProvider_MatchesCaseInsensitiveEcosystemAcrossAllSupportedTypes()
+    {
+        // The offline snapshot is the same JSON store that the dependency audit inventories
+        // for any of its eight ecosystems. Ecosystem matching must be case-insensitive (snapshots
+        // can legitimately store "Maven" or "maven" depending on tooling) and must work for the
+        // full set: NuGet, npm, PyPI, crates.io, cmake, golang, Maven, Gradle.
+        const string snapshotJson = """
+            {"source":"unit","updatedAt":"__TS__","packages":[
+              {"ecosystem":"Maven","name":"spring-core","advisories":[{"id":"MAVEN-1","severity":"HIGH","affectedRange":">=0","fixedVersion":"5.3.25"}]},
+              {"ecosystem":"golang","name":"github.com/gin-gonic/gin","advisories":[{"id":"GO-1","severity":"HIGH","affectedRange":">=0","fixedVersion":"1.9.2"}]},
+              {"ecosystem":"Gradle","name":"org.springframework:spring-core","advisories":[{"id":"GRADLE-1","severity":"HIGH","affectedRange":">=0","fixedVersion":"5.3.25"}]},
+              {"ecosystem":"cmake","name":"raylib","advisories":[{"id":"CMAKE-1","severity":"HIGH","affectedRange":">=0","fixedVersion":"5.5"}]}
+            ]}
+            """;
+        using var root = new SrcDepTempDir();
+        var updatedAt = DateTimeOffset.UtcNow.ToString("O");
+        var content = snapshotJson.Replace("__TS__", updatedAt);
+        var path = root.Write("advisories.json", content);
+        var hash = Convert.ToHexString(
+            SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(content)).AsSpan()).ToLowerInvariant();
+        var provider = new OfflineFileAdvisoryProvider(path, hash);
+
+        var maven = await provider.QueryAsync("Maven", "spring-core", "5.3.20", CancellationToken.None);
+        Assert.Equal("MAVEN-1", Assert.Single(maven.Advisories).AdvisoryId);
+
+        // Case-insensitive ecosystem matching: same package matches "Maven" and "maven".
+        var mavenLower = await provider.QueryAsync("maven", "spring-core", "5.3.20", CancellationToken.None);
+        Assert.Equal("MAVEN-1", Assert.Single(mavenLower.Advisories).AdvisoryId);
+
+        // 0.1.5-added ecosystems: golang, cmake, Gradle all reachable through the same offline
+        // provider that previously only served the original four.
+        var go = await provider.QueryAsync("golang", "github.com/gin-gonic/gin", "1.9.1", CancellationToken.None);
+        Assert.Equal("GO-1", Assert.Single(go.Advisories).AdvisoryId);
+
+        var gradle = await provider.QueryAsync("Gradle", "org.springframework:spring-core", "5.3.20", CancellationToken.None);
+        Assert.Equal("GRADLE-1", Assert.Single(gradle.Advisories).AdvisoryId);
+
+        var cmake = await provider.QueryAsync("cmake", "raylib", "5.5", CancellationToken.None);
+        Assert.Equal("CMAKE-1", Assert.Single(cmake.Advisories).AdvisoryId);
+
+        // Negative paths: wrong ecosystem returns empty advisories; package version not in
+        // the affected range returns empty advisories.
+        var gradleBoundedRange = await provider.QueryAsync("Gradle", "different-package", "5.3.20", CancellationToken.None);
+        Assert.Empty(gradleBoundedRange.Advisories);
+
+        var mavenMissEcosystem = await provider.QueryAsync("npm", "spring-core", "5.3.20", CancellationToken.None);
+        Assert.Empty(mavenMissEcosystem.Advisories);
+    }
+
+    [Fact]
     public async Task OsvProvider_DegradesGracefullyWhenEndpointUnreachable()
     {
         using var provider = new OsvAdvisoryProvider(new Uri("http://127.0.0.1:9/v1/query"));

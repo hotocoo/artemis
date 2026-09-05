@@ -12,14 +12,6 @@ namespace ACT.DependencyAnalysis;
 /// </summary>
 public sealed class OfflineFileAdvisoryProvider : ISecurityAdvisoryProvider
 {
-    private static readonly string[] SupportedEcosystems =
-    [
-        "NuGet",
-        "npm",
-        "PyPI",
-        "crates.io"
-    ];
-
     private readonly string _path;
     private readonly string? _expectedSha256;
     private readonly int _staleAfterDays;
@@ -206,14 +198,10 @@ public sealed class OfflineFileAdvisoryProvider : ISecurityAdvisoryProvider
 
     private static bool EcosystemMatches(string snapshotEcosystem, string requestedEcosystem)
     {
-        foreach (var supported in SupportedEcosystems)
-        {
-            if (supported.Equals(requestedEcosystem, StringComparison.OrdinalIgnoreCase))
-            {
-                return snapshotEcosystem.Equals(requestedEcosystem, StringComparison.OrdinalIgnoreCase);
-            }
-        }
-
+        // Case-insensitive ecosystem equality is the contract: the snapshot stores its ecosystem as
+        // the package manager's canonical name ("npm", "PyPI", "Maven", ...) while the dependency
+        // audit supplies the same ecosystem via DependencyEcosystemNames.ToCanonicalName. Both sides
+        // are stable strings, so a case-insensitive comparison is the right match rule.
         return snapshotEcosystem.Equals(requestedEcosystem, StringComparison.OrdinalIgnoreCase);
     }
 

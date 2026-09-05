@@ -125,6 +125,21 @@ a version bump commits to; the product version itself lives once in
   `LanguageDetection_MapsExtensionsExactly` pins the new mapping; future Go-targeted
   source rules can now opt in to `SourceLanguage.Go` and have it actually run.
 
+- **Offline advisory provider serves every supported ecosystem, not just the original four.**
+  `OfflineFileAdvisoryProvider.EcosystemMatches` had a loop over the four-element
+  `SupportedEcosystems` array whose body was identical to its fall-through return
+  value (case-insensitive string equality), so the array and the loop were both
+  dead code. That also meant the documented list of supported ecosystems had drifted
+  out of sync with the real dependency-analysis story: an offline snapshot covering
+  CMake, Go, Maven, or Gradle would only work by accident of the snapshot author
+  using the exact same canonical name the audit feeds in. The function is now a
+  direct case-insensitive equality check with a comment that pins the contract, and
+  a new fact under `OfflineProvider_MatchesCaseInsensitiveEcosystemAcrossAllSupportedTypes`
+  builds a snapshot covering all eight ecosystems (Maven, golang, Gradle, cmake)
+  and verifies that "Maven" and "maven" both hit, that wrong-ecosystem and
+  wrong-package queries return empty, and that none of the 0.1.5-added ecosystems
+  were dropped by the simplification.
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now
