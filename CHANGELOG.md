@@ -96,6 +96,14 @@ a version bump commits to; the product version itself lives once in
   same-group-different-artifact disambiguation, the all-managed fail-closed case, and the
   literal-over-managed preference.
 
+- **Dependency remediation now upgrades Go module dependencies on the spot.** A new
+  `RewriteGoMod` path handles both the `require ( ... )` block form and the single-line
+  `require <module> <version>` form, preserves the leading `require ` directive and any
+  `// indirect` marker, and leaves the `module `, `go `, `replace `, `exclude `, and
+  `retract ` directives untouched. Four new facts under `DependencyRemediatorTests` cover
+  the require-block path, the single-line require path, `// indirect` preservation, and
+  fail-closed behavior when the requested module is absent from the file.
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now

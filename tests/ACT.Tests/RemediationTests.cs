@@ -480,6 +480,138 @@ public sealed class DependencyRemediatorTests
             File.Delete(path);
         }
     }
+
+    [Fact]
+    public async Task UpdateVersionAsync_updates_go_mod_require_block()
+    {
+        // The require-block form is the standard layout for projects with multiple dependencies:
+        // the rewriter must locate the matching module inside the block, swap its v-prefixed
+        // version, and leave the rest of the file untouched.
+        var goMod = """
+            module github.com/example/project
+
+            go 1.21
+
+            require (
+            	github.com/gin-gonic/gin v1.9.1
+            	golang.org/x/net v0.17.0
+            )
+            """;
+        var path = TempFile(goMod);
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(
+                path, "github.com/gin-gonic/gin", "v1.9.2", CancellationToken.None);
+
+            Assert.True(result.Updated);
+            Assert.Equal("v1.9.1", result.PreviousVersion);
+            Assert.Equal("v1.9.2", result.NewVersion);
+
+            var content = File.ReadAllText(path);
+            Assert.Contains("github.com/gin-gonic/gin v1.9.2", content);
+            Assert.DoesNotContain("github.com/gin-gonic/gin v1.9.1", content);
+            // Sibling untouched.
+            Assert.Contains("golang.org/x/net v0.17.0", content);
+            // Structural directives and the require-block framing are untouched.
+            Assert.Contains("module github.com/example/project", content);
+            Assert.Contains("go 1.21", content);
+            Assert.Contains("require (", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_updates_go_mod_single_line_require()
+    {
+        // A module can also pin a single dependency outside any require block; the rewriter must
+        // recognize the leading "require " prefix and edit the trailing version token.
+        var goMod = """
+            module github.com/example/project
+
+            go 1.21
+
+            require github.com/solo/dep v2.0.0
+            """;
+        var path = TempFile(goMod);
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(
+                path, "github.com/solo/dep", "v2.1.0", CancellationToken.None);
+
+            Assert.True(result.Updated);
+            Assert.Equal("v2.0.0", result.PreviousVersion);
+
+            var content = File.ReadAllText(path);
+            Assert.Contains("require github.com/solo/dep v2.1.0", content);
+            Assert.DoesNotContain("require github.com/solo/dep v2.0.0", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_go_mod_preserves_indirect_marker()
+    {
+        // The "// indirect" marker in Go modules tells `go mod` that the entry is pulled in
+        // transitively. The rewriter must keep it in place when bumping the version so the
+        // project stays reproducible.
+        var goMod = """
+            module github.com/example/project
+
+            go 1.21
+
+            require (
+            	github.com/gin-gonic/gin v1.9.1 // indirect
+            )
+            """;
+        var path = TempFile(goMod);
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(
+                path, "github.com/gin-gonic/gin", "v1.9.2", CancellationToken.None);
+
+            Assert.True(result.Updated);
+            var content = File.ReadAllText(path);
+            Assert.Contains("github.com/gin-gonic/gin v1.9.2 // indirect", content);
+            Assert.DoesNotContain("github.com/gin-gonic/gin v1.9.1 // indirect", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task UpdateVersionAsync_go_mod_fails_closed_when_module_absent()
+    {
+        var goMod = """
+            module github.com/example/project
+
+            go 1.21
+
+            require github.com/solo/dep v2.0.0
+            """;
+        var path = TempFile(goMod);
+        try
+        {
+            var result = await DependencyRemediator.UpdateVersionAsync(
+                path, "github.com/nonexistent/project", "v1.0.0", CancellationToken.None);
+
+            Assert.False(result.Updated);
+            var content = File.ReadAllText(path);
+            // Nothing was fabricated.
+            Assert.Contains("require github.com/solo/dep v2.0.0", content);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
 }
 
 /// <summary>

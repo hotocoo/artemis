@@ -13,7 +13,7 @@ public sealed record DependencyRemediationResult(
 
 /// <summary>
 /// Fixes vulnerable dependencies on the spot by updating the pinned version in the source
-/// manifest to the advisory's fixed version. Supports NuGet, npm, PyPI, Cargo, and Maven
+/// manifest to the advisory's fixed version. Supports NuGet, npm, PyPI, Cargo, Maven, and Go
 /// manifests. The change is a surgical, single-package edit that preserves the rest of the
 /// manifest; formats the engine cannot confidently edit are reported as not updated rather
 /// than rewritten blindly.
@@ -70,6 +70,10 @@ public static class DependencyRemediator
         {
             return RewritePomXml(content, packageName, newVersion);
         }
+        if (LooksLikeGoMod(content))
+        {
+            return RewriteGoMod(content, packageName, newVersion);
+        }
         if (LooksLikeRequirementsTxt(content))
         {
             return RewriteRequirementsTxt(content, packageName, newVersion);
@@ -88,6 +92,10 @@ public static class DependencyRemediator
     private static bool LooksLikePomXml(string content) =>
         content.Contains("<project", StringComparison.OrdinalIgnoreCase) &&
         content.Contains("<dependency>", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LooksLikeGoMod(string content) =>
+        content.Contains("module ", StringComparison.Ordinal) &&
+        content.Contains("require ", StringComparison.Ordinal);
 
     private static bool LooksLikeRequirementsTxt(string content) =>
         content.Split('\n').Any(l => l.Trim().Contains("==") && !l.TrimStart().StartsWith("#"));
@@ -229,6 +237,80 @@ public static class DependencyRemediator
             }
 
             groupIdStart = content.IndexOf("<groupId>", groupIdCloseStart, StringComparison.OrdinalIgnoreCase);
+        }
+
+        return (null, null);
+    }
+
+    // go.mod: <module> <version> inside a require ( ... ) block or on a single-line require.
+    // packageName arrives as the module path (e.g. "github.com/gin-gonic/gin") and newVersion
+    // as the v-prefixed tag (e.g. "v1.9.2"). Trailing comments like "// indirect" are preserved.
+    private static (string?, string?) RewriteGoMod(string content, string packageName, string newVersion)
+    {
+        var lines = content.Split('\n');
+        for (var i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            var leadingWhitespaceEnd = 0;
+            while (leadingWhitespaceEnd < line.Length && char.IsWhiteSpace(line[leadingWhitespaceEnd]))
+            {
+                leadingWhitespaceEnd++;
+            }
+            var trimmed = line[leadingWhitespaceEnd..];
+
+            // Skip blank lines and full-line comments.
+            if (trimmed.Length == 0 || trimmed.StartsWith("//"))
+            {
+                continue;
+            }
+
+            // The structural directives and require-block framing are never the target.
+            if (trimmed.StartsWith("module ", StringComparison.Ordinal)
+                || trimmed.StartsWith("go ", StringComparison.Ordinal)
+                || trimmed.StartsWith("replace ", StringComparison.Ordinal)
+                || trimmed.StartsWith("exclude ", StringComparison.Ordinal)
+                || trimmed.StartsWith("retract ", StringComparison.Ordinal)
+                || trimmed.StartsWith("require (", StringComparison.Ordinal)
+                || trimmed == ")")
+            {
+                continue;
+            }
+
+            // A leading "require " (with trailing space) is the single-line form. Block
+            // entries inside require ( ... ) have no such prefix; remember which form we saw
+            // so the rebuilt line preserves the original framing.
+            var isSingleLineRequire = trimmed.StartsWith("require ", StringComparison.Ordinal);
+            var codePortion = isSingleLineRequire
+                ? trimmed["require ".Length..]
+                : trimmed;
+
+            // Pull off any trailing comment so the version token is unambiguous.
+            var commentIndex = codePortion.IndexOf("//", StringComparison.Ordinal);
+            string trailingComment = string.Empty;
+            var codeOnly = codePortion;
+            if (commentIndex >= 0)
+            {
+                trailingComment = codePortion[commentIndex..].Trim();
+                codeOnly = codePortion[..commentIndex].TrimEnd();
+            }
+
+            var tokens = codeOnly.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length < 2 || !string.Equals(tokens[0], packageName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var existingVersion = tokens[1];
+            var leadingWhitespace = line[..leadingWhitespaceEnd];
+            var prefix = isSingleLineRequire ? "require " : string.Empty;
+            var newLine = leadingWhitespace + prefix + packageName + " " + newVersion;
+            if (trailingComment.Length > 0)
+            {
+                newLine += " " + trailingComment;
+            }
+
+            lines[i] = newLine;
+            return (string.Join("\n", lines), existingVersion);
         }
 
         return (null, null);
