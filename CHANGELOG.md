@@ -62,6 +62,14 @@ a version bump commits to; the product version itself lives once in
   check now confirms with a natural negotiation and skips the verdict when the runtime itself
   lacks TLS 1.3 support, instead of blaming the server.
 
+- **Maven and Gradle manifests are no longer silently skipped during repository scans.** The
+  discovery gate that filters candidate files before parsing (`ManifestParser.IsManifestFileName`)
+  previously omitted `pom.xml`, `build.gradle`, and `build.gradle.kts`, even though the parsers
+  and ecosystem mapping already supported them. Repository dependency audits therefore ran
+  against these ecosystems without producing a single finding. The discovery gate now recognizes
+  all three names (case-insensitive), and a new test class asserts the discovery/ecosystem
+  contract stays in sync.
+
 ### Added
 
 - **Actionable remediation guidance on every source finding.** Each built-in source rule now

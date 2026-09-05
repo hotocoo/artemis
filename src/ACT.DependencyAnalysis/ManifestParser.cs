@@ -27,7 +27,10 @@ public sealed class ManifestParser
                || fileName.Equals("requirements.txt", StringComparison.OrdinalIgnoreCase)
                || fileName.Equals("Cargo.toml", StringComparison.OrdinalIgnoreCase)
                || fileName.Equals("CMakeLists.txt", StringComparison.OrdinalIgnoreCase)
-               || fileName.Equals("go.mod", StringComparison.OrdinalIgnoreCase);
+               || fileName.Equals("go.mod", StringComparison.OrdinalIgnoreCase)
+               || fileName.Equals("pom.xml", StringComparison.OrdinalIgnoreCase)
+               || fileName.Equals("build.gradle", StringComparison.OrdinalIgnoreCase)
+               || fileName.Equals("build.gradle.kts", StringComparison.OrdinalIgnoreCase);
     }
     /// <summary>
     /// Parses a go.mod file, extracting dependencies from require blocks.
