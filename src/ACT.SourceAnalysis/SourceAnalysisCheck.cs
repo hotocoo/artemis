@@ -87,21 +87,29 @@ public sealed class SourceAnalysisCheck : ISecurityCheck
         var timedOutRules = new SortedSet<string>(StringComparer.Ordinal);
         long filesExamined = 0;
 
+        // Cross-file flow needs callee summaries before caller files are evaluated. Keep only
+        // compact function summaries, then stream source again for normal rule evaluation.
+        var discoveredFiles = new List<FileContext>();
         await foreach (var entry in walker.WalkAsync(cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (entry is not DiscoveredFile discovered)
-            {
-                continue;
-            }
+            if (entry is DiscoveredFile discovered)
+                discoveredFiles.Add(discovered.File);
+        }
+        var flowCatalog = await _engine.CollectFunctionCatalogAsync(discoveredFiles, cancellationToken).ConfigureAwait(false);
+
+        foreach (var file in discoveredFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
 
             RuleScanResult scan;
             try
             {
                 scan = await _engine.EvaluateAsync(
-                    discovered.File,
-                    discovered.File.EnumerateLinesAsync(cancellationToken),
-                    cancellationToken).ConfigureAwait(false);
+                    file,
+                    file.EnumerateLinesAsync(cancellationToken),
+                    cancellationToken,
+                    flowCatalog).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -119,7 +127,7 @@ public sealed class SourceAnalysisCheck : ISecurityCheck
             {
                 EmitFinding(
                     ruleGroup.ToList(),
-                    discovered.File,
+                    file,
                     repositoryName,
                     context.Assessment.AssessmentId,
                     correlation,
@@ -293,4 +301,3 @@ public sealed class SourceAnalysisCheck : ISecurityCheck
             "path composition, request-driven outbound requests, sensitive logging, disabled TLS validation, " +
             "permissive CORS, insecure cookies, dangerous deserialization, and insecure shipped defaults.");
 }
-

@@ -29,7 +29,8 @@ public sealed class SourceRuleEngine
     public async Task<RuleScanResult> EvaluateAsync(
         FileContext file,
         IAsyncEnumerable<FileLine> lines,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        SourceFlowFunctionCatalog? flowCatalog = null)
     {
         var isTestFile = IsTestFile(file.RelativePath);
         var applicable = new List<SourceRule>();
@@ -46,22 +47,36 @@ public sealed class SourceRuleEngine
             }
         }
 
-        var remaining = new Dictionary<SourceRule, int>(ReferenceEqualityComparer.Instance);
+        var remaining = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (var rule in applicable)
         {
-            remaining[rule] = rule.MaxMatchesPerFile;
+            remaining[rule.RuleId] = rule.MaxMatchesPerFile;
         }
 
         var matches = new List<SourceRuleMatch>();
         var timedOut = new SortedSet<string>(StringComparer.Ordinal);
+        var flowAnalyzer = new SourceFlowAnalyzer(file.Language, flowCatalog, file.RelativePath);
 
         await foreach (var line in lines.WithCancellation(cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
+
+            // Semantic flow analysis runs in the same bounded line stream as declarative rules.
+            // This preserves the repository walk's memory envelope while catching source -> sink
+            // paths that cannot be expressed reliably as a single regular expression.
+            foreach (var flowMatch in flowAnalyzer.Analyze(line))
+            {
+                if (remaining.TryGetValue(flowMatch.Rule.RuleId, out var flowRemaining) && flowRemaining > 0)
+                {
+                    matches.Add(flowMatch);
+                    remaining[flowMatch.Rule.RuleId] = flowRemaining - 1;
+                }
+            }
+
             for (var index = applicable.Count - 1; index >= 0; index--)
             {
                 var rule = applicable[index];
-                if (remaining[rule] <= 0)
+                if (remaining[rule.RuleId] <= 0)
                 {
                     continue;
                 }
@@ -69,7 +84,7 @@ public sealed class SourceRuleEngine
                 try
                 {
                     var current = rule.Pattern.Match(line.Text);
-                    while (current.Success && remaining[rule] > 0)
+                    while (current.Success && remaining[rule.RuleId] > 0)
                     {
                         var captured = current.Groups["secret"] is { Success: true } secretGroup
                             ? secretGroup.Value
@@ -80,7 +95,7 @@ public sealed class SourceRuleEngine
                         if (admitted)
                         {
                             matches.Add(new SourceRuleMatch(rule, line.Number, line.Text, captured));
-                            remaining[rule]--;
+                            remaining[rule.RuleId]--;
                         }
 
                         if (current.Length == 0)
@@ -100,7 +115,59 @@ public sealed class SourceRuleEngine
             }
         }
 
+        // Resolve forward declarations after the streamed source unit is complete. Deferred flow
+        // findings are still subject to the same per-rule match budget as ordinary findings.
+        foreach (var flowMatch in flowAnalyzer.FinalizeAnalysis())
+        {
+            if (remaining.TryGetValue(flowMatch.Rule.RuleId, out var flowRemaining) && flowRemaining > 0)
+            {
+                matches.Add(flowMatch);
+                remaining[flowMatch.Rule.RuleId] = flowRemaining - 1;
+            }
+        }
+
         return new RuleScanResult(matches, timedOut.ToArray());
+    }
+
+    /// <summary>Builds repository-wide function summaries without retaining source lines.</summary>
+    public async Task<SourceFlowFunctionCatalog> CollectFunctionCatalogAsync(
+        IEnumerable<FileContext> files,
+        CancellationToken cancellationToken)
+    {
+        var fileList = files.ToArray();
+        var summaries = new List<(string ModulePath, IReadOnlyDictionary<string, SourceFlowAnalyzer.FunctionSummary> Summaries)>();
+        foreach (var file in fileList)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var analyzer = new SourceFlowAnalyzer(file.Language, modulePath: file.RelativePath);
+            await foreach (var line in file.EnumerateLinesAsync(cancellationToken).ConfigureAwait(false))
+            {
+                analyzer.Analyze(line);
+            }
+            analyzer.FinalizeAnalysis();
+            summaries.Add((file.RelativePath, analyzer.FunctionSummaries));
+        }
+        var catalog = new SourceFlowFunctionCatalog();
+        catalog.Replace(summaries);
+        for (var pass = 0; pass < 8; pass++)
+        {
+            var next = new List<(string ModulePath, IReadOnlyDictionary<string, SourceFlowAnalyzer.FunctionSummary> Summaries)>();
+            foreach (var file in fileList)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var analyzer = new SourceFlowAnalyzer(file.Language, catalog, file.RelativePath);
+                await foreach (var line in file.EnumerateLinesAsync(cancellationToken).ConfigureAwait(false))
+                    analyzer.Analyze(line);
+                analyzer.FinalizeAnalysis();
+                next.Add((file.RelativePath, analyzer.FunctionSummaries));
+            }
+            var nextCatalog = new SourceFlowFunctionCatalog();
+            nextCatalog.Replace(next);
+            if (catalog.StructurallyEquals(nextCatalog))
+                return catalog;
+            catalog = nextCatalog;
+        }
+        return catalog;
     }
 
     /// <summary>
@@ -167,4 +234,3 @@ public sealed class SourceRuleEngine
         return false;
     }
 }
-

@@ -1,0 +1,378 @@
+using System.Text.RegularExpressions;
+using ACT.Contracts;
+
+namespace ACT.SourceAnalysis;
+
+/// <summary>Security-relevant taint category tracked by the lightweight source-flow engine.</summary>
+public enum SourceTaintKind
+{
+    Request,
+    Environment,
+    UserInput,
+    FilePath,
+    NetworkUrl
+}
+
+/// <summary>Built-in semantic source-flow rules. These complement line-oriented declarative rules.</summary>
+public static class SourceFlowRules
+{
+    public static IReadOnlyList<SourceRule> All { get; } =
+    [
+        FlowRule("SRC-FLOW-111", "Tainted data reaches a SQL execution sink", "SqlInjectionFlow", Severity.Critical,
+            "Use parameterized queries and bind values separately from SQL text.",
+            "CWE-89", Lang(SourceLanguage.Cs, SourceLanguage.Ts, SourceLanguage.Js, SourceLanguage.Py, SourceLanguage.Go, SourceLanguage.Java, SourceLanguage.Kotlin, SourceLanguage.Rust, SourceLanguage.Php, SourceLanguage.Ruby, SourceLanguage.Scala)),
+        FlowRule("SRC-FLOW-112", "Tainted data reaches a command execution sink", "CommandInjectionFlow", Severity.Critical,
+            "Avoid shell execution; pass a fixed executable and an argument vector after strict allowlisting.",
+            "CWE-78", Lang(SourceLanguage.Cs, SourceLanguage.Ts, SourceLanguage.Js, SourceLanguage.Py, SourceLanguage.Go, SourceLanguage.Java, SourceLanguage.Kotlin, SourceLanguage.Rust, SourceLanguage.Php, SourceLanguage.Ruby, SourceLanguage.Dart, SourceLanguage.Scala, SourceLanguage.Swift)),
+        FlowRule("SRC-FLOW-113", "Tainted data reaches a filesystem path sink", "PathTraversalFlow", Severity.High,
+            "Constrain paths to an intended root and canonicalize/allowlist the resulting path before access.",
+            "CWE-22", Lang(SourceLanguage.Cs, SourceLanguage.Ts, SourceLanguage.Js, SourceLanguage.Py, SourceLanguage.Go, SourceLanguage.Java, SourceLanguage.Kotlin, SourceLanguage.Rust, SourceLanguage.Php, SourceLanguage.Ruby, SourceLanguage.Dart, SourceLanguage.Scala, SourceLanguage.Swift)),
+        FlowRule("SRC-FLOW-114", "Tainted data reaches an outbound network request sink", "SsrFflow", Severity.High,
+            "Allowlist destinations and schemes; block private, loopback, link-local and metadata networks after DNS resolution.",
+            "CWE-918", Lang(SourceLanguage.Cs, SourceLanguage.Ts, SourceLanguage.Js, SourceLanguage.Py, SourceLanguage.Go, SourceLanguage.Java, SourceLanguage.Kotlin, SourceLanguage.Rust, SourceLanguage.Php, SourceLanguage.Ruby, SourceLanguage.Dart, SourceLanguage.Scala, SourceLanguage.Swift)),
+        FlowRule("SRC-FLOW-115", "Tainted data reaches a redirect or Location sink", "OpenRedirectFlow", Severity.High,
+            "Use relative redirects or an explicit destination allowlist; never redirect directly to arbitrary user input.",
+            "CWE-601", Lang(SourceLanguage.Cs, SourceLanguage.Ts, SourceLanguage.Js, SourceLanguage.Py, SourceLanguage.Go, SourceLanguage.Java, SourceLanguage.Kotlin, SourceLanguage.Php, SourceLanguage.Ruby, SourceLanguage.Dart, SourceLanguage.Scala, SourceLanguage.Swift)),
+        FlowRule("SRC-FLOW-116", "Tainted data reaches a dynamic code-evaluation sink", "CodeExecutionFlow", Severity.Critical,
+            "Remove dynamic evaluation; parse data as data and use a constrained interpreter only when unavoidable.",
+            "CWE-95", Lang(SourceLanguage.Cs, SourceLanguage.Ts, SourceLanguage.Js, SourceLanguage.Py, SourceLanguage.Php, SourceLanguage.Ruby, SourceLanguage.Dart, SourceLanguage.Scala)),
+        FlowRule("SRC-FLOW-117", "Tainted data reaches an unsafe deserialization sink", "UnsafeDeserializationFlow", Severity.Critical,
+            "Use a safe data format/parser with an explicit type allowlist and integrity checks.",
+            "CWE-502", Lang(SourceLanguage.Cs, SourceLanguage.Py, SourceLanguage.Java, SourceLanguage.Kotlin, SourceLanguage.Ruby, SourceLanguage.Php, SourceLanguage.Rust)),
+        FlowRule("SRC-FLOW-118", "Tainted data reaches a server-side template sink", "TemplateInjectionFlow", Severity.High,
+            "Keep templates trusted and pass untrusted values as data rather than template source.",
+            "CWE-1336", Lang(SourceLanguage.Cs, SourceLanguage.Ts, SourceLanguage.Js, SourceLanguage.Py, SourceLanguage.Java, SourceLanguage.Kotlin, SourceLanguage.Ruby, SourceLanguage.Php, SourceLanguage.Go))
+    ];
+
+    private static SourceRule FlowRule(string id, string title, string findingClass, Severity severity, string remediation, string cwe, IReadOnlyList<SourceLanguage> languages) =>
+        new(id, title,
+            "The source-flow engine established a path from an untrusted input source to a security-sensitive sink within the analyzed source unit.",
+            new RemediationGuidance(remediation, [remediation], [cwe]), findingClass, severity,
+            ConfidenceLevel.High, true, languages, 10,
+            new Regex("(?!)", RegexOptions.Compiled));
+
+    private static IReadOnlyList<SourceLanguage> Lang(params SourceLanguage[] languages) => languages;
+}
+
+/// <summary>
+/// Bounded intraprocedural taint analysis. It tracks identifiers through assignments and simple
+/// expressions, then checks security-sensitive sinks. It deliberately does not claim interprocedural
+/// or type-system precision; the existing pattern rules remain responsible for structural findings.
+/// </summary>
+public sealed class SourceFlowAnalyzer
+{
+    private readonly SourceLanguage _language;
+    private readonly Dictionary<string, SourceTaintKind> _tainted = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FunctionSummary> _taintedFunctions = new(StringComparer.Ordinal);
+    private string? _currentFunction;
+    private int _functionBraceDepth;
+    private readonly Dictionary<string, List<string>> _functionParameters = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, HashSet<int>> _pendingTaintedParameters = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SourceTaintKind> _pendingTaints = new(StringComparer.Ordinal);
+    private List<string> _currentParameters = [];
+    private readonly HashSet<int> _currentReturnParameters = [];
+    private SourceTaintKind? _currentDirectReturn;
+    private Dictionary<string, SourceTaintKind>? _outerScope;
+    private int _functionIndent = -1;
+
+    private static readonly Regex FunctionDeclaration = new(
+        @"\b(?:function\s+(?<name>[A-Za-z_$][A-Za-z0-9_$]*)|(?:public|private|protected|internal|static|async|override|virtual|final|fun|func|fn|def|sub|method)\s+)+(?<name2>[A-Za-z_$][A-Za-z0-9_$]*)\s*\((?<params>[^)]*)\)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex ReturnStatement = new(
+        @"\breturn\s+(?<expr>[^;]+)", RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex FunctionCallAssignment = new(
+        @"\b(?:var|let|const|val|auto|String|int|long|object|final|def)?\s*(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?<call>[A-Za-z_$][A-Za-z0-9_$]*)\s*\((?<args>[^)]*)\)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex FunctionCall = new(
+        @"\b(?<fn>[A-Za-z_$][A-Za-z0-9_$.]*)\s*\((?<args>[^()]*)\)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex Assignment = new(
+        @"(?:\b(?:var|let|const|val|Dim|String|int|long|auto|char\*|object)\s+)?(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?<expr>[^;]+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex Identifier = new(@"\b[A-Za-z_$][A-Za-z0-9_$]*\b", RegexOptions.Compiled);
+
+    private static readonly Regex[] RequestSources =
+    [
+        new(@"\b(?:Request\.(?:Query|Form|Headers|Cookies|Path|RouteValues)|HttpContext\.Request\.)", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\b(?:req|request)\.(?:query|body|params|form|args|values|headers|cookies|url|originalUrl)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\b(?:request\.getParameter|request\.getHeader|request\.getQueryString|r\.URL\.Query|r\.FormValue|r\.Header\.Get|params\[|\$_(?:GET|POST|REQUEST|COOKIE))", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\b(?:request\.queryParameters|request\.uri\.queryParameters)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] EnvironmentSources =
+    [
+        new(@"\b(?:Environment\.GetEnvironmentVariable|System\.getenv|os\.environ(?:\.get)?|os\.getenv|getenv|std::env::var|process\.env|ENV\[|ENV\.fetch)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\b(?:Environment\.GetCommandLineArgs|System\.getProperty|process\.argv|os\.Args|sys\.argv|ARGV)\b", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] UserInputSources =
+    [
+        new(@"\b(?:input\(|Console\.ReadLine\(|readLine\(|bufio\.NewReader|stdin|TextField\(|getText\()", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] SqlSinks =
+    [
+        new(@"\b(?:Execute(?:NonQuery|Scalar|Reader)?|exec(?:ute)?|query|raw|rawQuery|createNativeQuery|JdbcTemplate\.(?:query|update)|Statement\.execute(?:Query|Update)?)\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\b(?:cursor|db|database|connection|conn)\.(?:execute|executemany|raw)\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] CommandSinks =
+    [
+        new(@"\b(?:system|popen|exec|spawn|Process\.Start|Process\.Run|Process\.runSync|child_process\.(?:exec|execSync|spawn|spawnSync)|subprocess\.(?:run|Popen|call)|Runtime\.getRuntime\(\)\.exec|Open3\.(?:capture[23]|popen[23]))\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\b(?:Command|CommandLine)\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] PathSinks =
+    [
+        new(@"\b(?:File\.(?:Open|ReadAllText|WriteAllText|Delete|Copy|Move)|FileStream|File\.OpenRead|File\.OpenWrite|open|readFile(?:Sync)?|writeFile(?:Sync)?|unlink(?:Sync)?|os\.(?:open|remove)|Path\.new|Files\.(?:read|write|delete|newInputStream|newOutputStream))\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\b(?:send_file|send_from_directory|render_template|include|require)\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] UrlSinks =
+    [
+        new(@"\b(?:HttpClient|WebClient|WebRequest|fetch|axios\.(?:get|post|put|delete|request)|requests\.(?:get|post|put|delete|request)|urllib\.request\.urlopen|http\.(?:Get|Post)|client\.(?:get|post|request)|URLSession|Dio\.(?:get|post))\s*", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] RedirectSinks =
+    [
+        new(@"\b(?:Redirect|redirect|RedirectToAction|sendRedirect|location\.assign|location\.replace|res\.redirect|Response\.Redirect)\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase),
+        new(@"\bLocation\s*[:=]", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] EvalSinks =
+    [
+        new(@"\b(?:eval|exec|execfile|compile|Function|vm\.run(?:InNewContext|InContext)?|Expression\.Compile|ScriptEngine\.eval|Kernel\.eval|instance_eval)\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] DeserializeSinks =
+    [
+        new(@"\b(?:BinaryFormatter|NetDataContractSerializer|ObjectInputStream|readObject|pickle\.(?:load|loads)|yaml\.(?:load|unsafe_load)|YAML\.load|unserialize|Marshal\.load|bincode::deserialize|JsonConvert\.DeserializeObject)\s*", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    private static readonly Regex[] TemplateSinks =
+    [
+        new(@"\b(?:render_template_string|Template|Jinja2\.Template|twig(?:\.createTemplate)?|Handlebars\.compile|Mustache\.render|VelocityEngine|FreeMarker)\s*\(", RegexOptions.Compiled | RegexOptions.IgnoreCase)
+    ];
+
+    public SourceFlowAnalyzer(SourceLanguage language) => _language = language;
+
+    /// <summary>Processes one source line and returns semantic sink matches for that line.</summary>
+    public IReadOnlyList<SourceRuleMatch> Analyze(FileLine line)
+    {
+        var results = new List<SourceRuleMatch>();
+        var text = line.Text;
+        var code = CodeWithoutStrings(text);
+        var trimmed = text.TrimStart();
+        if (trimmed.StartsWith("//", StringComparison.Ordinal) || trimmed.StartsWith("#", StringComparison.Ordinal) ||
+            trimmed.StartsWith("/*", StringComparison.Ordinal) || trimmed.StartsWith("*", StringComparison.Ordinal))
+            return results;
+
+        TrackFunctionContext(code);
+
+        foreach (Match assignment in Assignment.Matches(code))
+        {
+            var name = assignment.Groups["name"].Value;
+            var expr = assignment.Groups["expr"].Value;
+            // Evaluate the complete assignment as well as the RHS. This handles typed/indexed
+            // request expressions such as Request.Query["id"] without depending on how a language
+            // lexer tokenizes the surrounding declaration.
+            var source = SourceKind(expr) ?? SourceKind(text);
+            if (source.HasValue)
+            {
+                _tainted[name] = source.Value;
+            }
+            else if (ContainsTaintedIdentifier(expr))
+            {
+                _tainted[name] = FirstTaint(expr);
+            }
+            else if (TryTaintedFunctionCall(expr, out var functionTaint))
+            {
+                _tainted[name] = functionTaint;
+            }
+            else
+            {
+                _tainted.Remove(name);
+            }
+        }
+
+        foreach (Match call in FunctionCallAssignment.Matches(code))
+        {
+            if (TryTaintedFunctionCall(call.Value, out var functionTaint))
+                _tainted[call.Groups["name"].Value] = functionTaint;
+        }
+
+        var returnMatch = ReturnStatement.Match(code);
+        if (_currentFunction is not null && returnMatch.Success)
+        {
+            var returnTaint = SourceKind(returnMatch.Groups["expr"].Value);
+            if (!returnTaint.HasValue && ContainsTaintedIdentifier(returnMatch.Groups["expr"].Value))
+                returnTaint = FirstTaint(returnMatch.Groups["expr"].Value);
+            if (returnTaint.HasValue)
+                _taintedFunctions[_currentFunction] = returnTaint.Value;
+        }
+
+        if (_currentFunction is not null && _functionBraceDepth <= 0)
+            _currentFunction = null;
+
+        // Declaration syntax varies considerably across the supported languages. If a line is
+        // unmistakably a source assignment but the generic declaration regex could not bind its
+        // LHS (for example an indexed C# request expression), recover the final LHS identifier.
+        var equals = text.IndexOf('=');
+        var lineSource = SourceKind(text);
+        if (equals > 0 && lineSource.HasValue)
+        {
+            var lhs = Regex.Match(text[..equals], @"(?<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*$");
+            if (lhs.Success)
+                _tainted[lhs.Groups["name"].Value] = lineSource.Value;
+        }
+
+        EmitIfTainted(text, line, SqlSinks, "SRC-FLOW-111", results, IsSqlSanitized(text));
+        EmitIfTainted(text, line, CommandSinks, "SRC-FLOW-112", results, IsCommandSanitized(text));
+        EmitIfTainted(text, line, PathSinks, "SRC-FLOW-113", results, IsPathSanitized(text));
+        EmitIfTainted(text, line, UrlSinks, "SRC-FLOW-114", results, IsUrlSanitized(text));
+        EmitIfTainted(text, line, RedirectSinks, "SRC-FLOW-115", results, false);
+        EmitIfTainted(text, line, EvalSinks, "SRC-FLOW-116", results, false);
+        EmitIfTainted(text, line, DeserializeSinks, "SRC-FLOW-117", results, IsDeserializeSanitized(text));
+        EmitIfTainted(text, line, TemplateSinks, "SRC-FLOW-118", results, false);
+        return results;
+    }
+
+    private void EmitIfTainted(string text, FileLine line, Regex[] sinks, string ruleId, ICollection<SourceRuleMatch> results, bool sanitized)
+    {
+        if (sanitized || !sinks.Any(r => r.IsMatch(text))) return;
+        var identifiers = Identifier.Matches(CodeWithoutStrings(text)).Select(m => m.Value).ToHashSet(StringComparer.Ordinal);
+        var tainted = _tainted.Keys.FirstOrDefault(identifiers.Contains);
+        if (tainted is null && SourceKind(text).HasValue) tainted = "direct-input";
+        if (tainted is null) return;
+
+        var rule = SourceFlowRules.All.First(r => r.RuleId == ruleId);
+        results.Add(new SourceRuleMatch(rule, line.Number, line.Text, tainted));
+    }
+
+    private SourceTaintKind? SourceKind(string expression)
+    {
+        if (RequestSources.Any(r => r.IsMatch(expression)) ||
+            Regex.IsMatch(expression, @"\b(?:Request|request|req)\s*(?:\.\s*(?:Query|Form|Headers|Cookies|Path|RouteValues|query|body|params|form|args|values|headers|cookies)|\[)", RegexOptions.IgnoreCase))
+            return SourceTaintKind.Request;
+        if (EnvironmentSources.Any(r => r.IsMatch(expression))) return SourceTaintKind.Environment;
+        if (UserInputSources.Any(r => r.IsMatch(expression))) return SourceTaintKind.UserInput;
+        return null;
+    }
+
+    private bool TryTaintedFunctionCall(string expression, out SourceTaintKind kind)
+    {
+        kind = default;
+        var call = FunctionCallAssignment.Match(expression);
+        if (!call.Success)
+            call = Regex.Match(expression, @"\b(?<fn>[A-Za-z_$][A-Za-z0-9_$]*)\s*\((?<args>[^)]*)\)");
+        if (!call.Success) return false;
+
+        var functionName = call.Groups["call"].Success ? call.Groups["call"].Value : call.Groups["fn"].Value;
+        return _taintedFunctions.TryGetValue(functionName, out kind);
+    }
+
+    private void TrackFunctionContext(string code)
+    {
+        var declaration = FunctionDeclaration.Match(code);
+        if (declaration.Success)
+        {
+            _currentFunction = declaration.Groups["name"].Success
+                ? declaration.Groups["name"].Value
+                : declaration.Groups["name2"].Value;
+            _functionBraceDepth = 0;
+        }
+
+        if (_currentFunction is null) return;
+        foreach (var c in code)
+        {
+            if (c == '{') _functionBraceDepth++;
+            else if (c == '}') _functionBraceDepth--;
+        }
+
+        // Python/brace-less functions have no brace depth; retain the summary until a new
+        // declaration appears. Brace-based functions leave the context after their closing brace.
+        if (_functionBraceDepth < 0)
+            _currentFunction = null;
+    }
+
+    private bool ContainsTaintedIdentifier(string expression)
+    {
+        var code = CodeWithoutStrings(expression);
+        return _tainted.Keys.Any(name => Identifier.IsMatch(name) && Identifier.Matches(code).Any(m => m.Value == name));
+    }
+
+    private SourceTaintKind FirstTaint(string expression)
+    {
+        var code = CodeWithoutStrings(expression);
+        return _tainted.First(kvp => Identifier.Matches(code).Any(m => m.Value == kvp.Key)).Value;
+    }
+
+    /// <summary>Returns a code-only view so a variable name mentioned inside a string literal cannot carry taint.</summary>
+    private static string CodeWithoutStrings(string text)
+    {
+        var chars = text.ToCharArray();
+        var quote = '\0';
+        var escaped = false;
+        for (var i = 0; i < chars.Length; i++)
+        {
+            var c = chars[i];
+            if (quote == '\0')
+            {
+                if (c is '\"' or '\'' or '`') quote = c;
+                continue;
+            }
+
+            if (escaped)
+            {
+                chars[i] = ' ';
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\')
+            {
+                chars[i] = ' ';
+                escaped = true;
+            }
+            else if (c == quote)
+            {
+                chars[i] = ' ';
+                quote = '\0';
+            }
+            else
+            {
+                chars[i] = ' ';
+            }
+        }
+
+        return new string(chars);
+    }
+
+    private static bool IsSqlSanitized(string text)
+    {
+        var code = CodeWithoutStrings(text);
+        return Regex.IsMatch(code, @"\b(?:SqlParameter|PreparedStatement|prepare\s*\(|parameteri[sz]ed|bind(?:Value|Param))\b", RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsCommandSanitized(string text)
+    {
+        var code = CodeWithoutStrings(text);
+        return (Regex.IsMatch(code, @"\b(?:ArgumentList|ProcessStartInfo|execve|execvp)\b", RegexOptions.IgnoreCase)
+                || Regex.IsMatch(code, @"\bshell\s*=\s*false\b", RegexOptions.IgnoreCase))
+               && !Regex.IsMatch(code, @"\b(?:shell|bash|sh)\s*[:=]\s*true\b", RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsPathSanitized(string text)
+    {
+        var code = CodeWithoutStrings(text);
+        return Regex.IsMatch(code, @"\b(?:GetFileName|basename|realpath|resolve|canonicalize|Path\.GetFullPath)\s*\(", RegexOptions.IgnoreCase);
+    }
+
+    private static bool IsUrlSanitized(string text) => Regex.IsMatch(CodeWithoutStrings(text), @"\b(?:Uri\.CheckHostName|IsAllowedHost|AllowlistedHost|AllowedHosts|UrlAllowlist|allowlist(?:ed)?Url|Uri\.TryCreate)\b", RegexOptions.IgnoreCase);
+    private static bool IsDeserializeSanitized(string text) => Regex.IsMatch(CodeWithoutStrings(text), @"\b(?:allowedTypes|TypeNameHandling\.None|safe_load|SafeLoad|allowlist)\b", RegexOptions.IgnoreCase);
+}

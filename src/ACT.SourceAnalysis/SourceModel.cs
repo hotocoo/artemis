@@ -15,9 +15,17 @@ public enum SourceLanguage
     Rust,
     Cpp,
     Go,
+    Java,
+    Kotlin,
+    Swift,
+    Php,
+    Ruby,
+    Dart,
+    Scala,
     Sql,
     Yaml,
     Json,
+    Hcl,
     Dockerfile,
     Shell,
     Unknown
@@ -55,10 +63,18 @@ public static class SourceLanguageDetector
             // ecosystem (Go modules are inventoried starting in 0.1.5) and clears the way for
             // Go-targeted source rules to be added on top of the detector.
             ".go" => SourceLanguage.Go,
+            ".java" => SourceLanguage.Java,
+            ".kt" or ".kts" => SourceLanguage.Kotlin,
+            ".swift" => SourceLanguage.Swift,
+            ".php" => SourceLanguage.Php,
+            ".rb" or ".rake" or ".gemspec" => SourceLanguage.Ruby,
+            ".dart" => SourceLanguage.Dart,
+            ".scala" or ".sc" => SourceLanguage.Scala,
             ".cpp" or ".cc" or ".cxx" or ".c++" or ".hpp" or ".hh" or ".hxx" or ".h" or ".c" => SourceLanguage.Cpp,
             ".sql" => SourceLanguage.Sql,
             ".yaml" or ".yml" => SourceLanguage.Yaml,
             ".json" => SourceLanguage.Json,
+            ".tf" or ".tfvars" => SourceLanguage.Hcl,
             ".sh" or ".bash" or ".zsh" => SourceLanguage.Shell,
             _ => SourceLanguage.Unknown
         };
@@ -210,4 +226,3 @@ public sealed record RepositoryWalkStatistics(
     long DepthLimitedDirectories,
     long IgnoredDirectories,
     bool FileLimitReached);
-
