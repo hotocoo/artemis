@@ -1,0 +1,4 @@
+[
+{"benchmark":"EvaluateAllowed","mean":"26.67ns","error":"0.122ns","stddev":"0.114ns"},
+{"benchmark":"EvaluateThreeVerdicts","mean":"264.98ns","error":"2.322ns","stddev":"2.058ns"}
+]

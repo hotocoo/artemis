@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Reference - Artemis</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="index.html" class="logo">Artemis</a>
+            <ul>
+                <li><a href="getting-started.html">Getting Started</a></li>
+                <li><a href="architecture.html">Architecture</a></li>
+                <li><a href="api-reference.html" class="active">API Reference</a></li>
+                <li><a href="examples.html">Examples</a></li>
+                <li><a href="https://github.com/acotech/Artemis">GitHub</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section>
+            <h1>API Reference</h1>
+
+            <h2>CLI Commands</h2>
+            <h3>artemis scan</h3>
+            <p>Run a security assessment on a project or directory.</p>
+            <pre><code>artemis scan [path] [options]
+
+Options:
+  --severity &lt;level&gt;    Filter findings by minimum severity (low|medium|high|critical)
+  --report &lt;format&gt;     Output format(s), comma-separated (sarif|json|html|text|sbom)
+  --output &lt;path&gt;       Output file or directory path
+  --config &lt;path&gt;       Path to custom configuration file
+  --scanners &lt;list&gt;     Comma-separated list of scanners to run
+  --verbose             Enable verbose output
+  --quiet               Suppress non-error output
+  --timeout &lt;seconds&gt;   Maximum scan duration</code></pre>
+
+            <h3>artemis config</h3>
+            <p>Manage Artemis configuration.</p>
+            <pre><code>artemis config --list              # List all configuration options
+artemis config --get &lt;key&gt;         # Get a specific configuration value
+artemis config --set &lt;key&gt; &lt;val&gt;   # Set a configuration value</code></pre>
+
+            <h3>artemis audit</h3>
+            <p>Manage the audit ledger.</p>
+            <pre><code>artemis audit --verify             # Verify audit ledger integrity
+artemis audit --export &lt;path&gt;      # Export audit log to file</code></pre>
+
+            <h2>Configuration Schema</h2>
+            <pre><code>{
+  "scanners": {
+    "secrets": { "enabled": true, "patterns": [] },
+    "dependencies": { "enabled": true, "ecosystems": [] },
+    "lint": { "enabled": true, "rules": [] },
+    "sast": { "enabled": true, "languages": [] },
+    "sbom": { "enabled": true, "format": "cyclonedx" }
+  },
+  "severity": "medium",
+  "report": {
+    "formats": ["json"],
+    "output": "./reports",
+    "includeDetails": true
+  },
+  "audit": {
+    "enabled": true,
+    "path": "./artemis-audit.db"
+  }
+}</code></pre>
+
+            <h2>Output Formats</h2>
+            <h3>SARIF 2.1</h3>
+            <p>Standard format for static analysis results, compatible with GitHub CodeQL, GitLab, and other CI/CD platforms.</p>
+
+            <h3>JSON</h3>
+            <p>Machine-readable format with full finding details.</p>
+
+            <h3>HTML</h3>
+            <p>Human-readable report with severity badges and filtering.</p>
+
+            <h3>CycloneDX SBOM</h3>
+            <p>Software Bill of Materials in CycloneDX format for dependency tracking.</p>
+
+            <h2>Exit Codes</h2>
+            <ul>
+                <li><strong>0</strong> - No findings or all findings below severity threshold</li>
+                <li><strong>1</strong> - Findings detected at or above severity threshold</li>
+                <li><strong>2</strong> - Configuration or runtime error</li>
+            </ul>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 Artemis Project. Open source under MIT License.</p>
+    </footer>
+</body>
+</html>

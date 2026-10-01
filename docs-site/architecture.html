@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Architecture - Artemis</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="index.html" class="logo">Artemis</a>
+            <ul>
+                <li><a href="getting-started.html">Getting Started</a></li>
+                <li><a href="architecture.html" class="active">Architecture</a></li>
+                <li><a href="api-reference.html">API Reference</a></li>
+                <li><a href="examples.html">Examples</a></li>
+                <li><a href="https://github.com/acotech/Artemis">GitHub</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section>
+            <h1>Architecture</h1>
+
+            <h2>Overview</h2>
+            <p>Artemis follows a modular, plugin-based architecture with 18 specialized assessment modules (ACT.*). Each module is independently testable, benchmarked, and versioned.</p>
+
+            <h2>Module Map</h2>
+            <pre>
+artemis (CLI)
+├── ACT.Core              # Core abstractions and interfaces
+├── ACT.Configuration     # Configuration management
+├── ACT.Logging           # Structured logging
+├── ACT.Persistence       # Storage and audit ledger
+├── ACT.Reporting         # Report generation
+├── ACT.Sandbox           # Execution sandboxing
+├── ACT.Orchestration     # Pipeline orchestration
+│
+├── ACT.SourceAnalysis    # Source code parsing
+├── ACT.DependencyAnalysis # Dependency graph analysis
+├── ACT.Lint              # Code linting
+├── ACT.Sast              # Static application security testing
+├── ACT.Secrets           # Secret detection
+├── ACT.Sbom              # Software Bill of Materials
+├── ACT.Scope             # Scope evaluation (IP/CIDR)
+├── ACT.Dns               # DNS analysis
+├── ACT.Tls               # TLS certificate analysis
+├── ACT.Network           # Network configuration analysis
+├── ACT.Container         # Container image analysis
+├── ACT.Kubernetes        # Kubernetes manifest analysis
+├── ACT.Cloud             # Cloud configuration analysis
+├── ACT.Iam               # Identity and access management
+├── ACT.Database          # Database schema analysis
+├── ACT.CiCd              # CI/CD pipeline analysis
+└── ACT.Audit             # Audit and compliance
+            </pre>
+
+            <h2>Design Principles</h2>
+            <ul>
+                <li><strong>Fail-Closed:</strong> All parsers and evaluators fail closed on unexpected input rather than guessing.</li>
+                <li><strong>Deterministic:</strong> Results are reproducible given the same input and configuration.</li>
+                <li><strong>Hash-Chained Audit:</strong> All findings are recorded in a tamper-evident audit ledger.</li>
+                <li><strong>Typed Contracts:</strong> Frozen typed contracts between modules ensure compatibility.</li>
+                <li><strong>Property-Based Testing:</strong> Core algorithms verified with FsCheck property-based tests.</li>
+            </ul>
+
+            <h2>Data Flow</h2>
+            <pre>
+Input (path/config) → Configuration → Orchestration
+                                    ↓
+                    Source Analysis → Lint → SAST → Secrets → Dependencies
+                                    ↓
+                    Scope → DNS → TLS → Network → Container → Kubernetes
+                                    ↓
+                    Cloud → IAM → Database → CI/CD → SBOM
+                                    ↓
+                                Reporting
+                                    ↓
+                    SARIF | JSON | HTML | Text | SBOM
+            </pre>
+
+            <h2>Technology Stack</h2>
+            <ul>
+                <li><strong>Language:</strong> C# (.NET 10)</li>
+                <li><strong>Testing:</strong> xUnit + FsCheck (property-based) + BenchmarkDotNet</li>
+                <li><strong>Reporting:</strong> SARIF 2.1, CycloneDX SBOM, JSON, HTML, Text</li>
+                <li><strong>Persistence:</strong> SQLite (audit ledger)</li>
+                <li><strong>Distribution:</strong> NuGet global tool</li>
+            </ul>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 Artemis Project. Open source under MIT License.</p>
+    </footer>
+</body>
+</html>

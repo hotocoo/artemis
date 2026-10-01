@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artemis - Autonomous Defensive Security Assessment</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="index.html" class="logo">Artemis</a>
+            <ul>
+                <li><a href="getting-started.html">Getting Started</a></li>
+                <li><a href="architecture.html">Architecture</a></li>
+                <li><a href="api-reference.html">API Reference</a></li>
+                <li><a href="examples.html">Examples</a></li>
+                <li><a href="https://github.com/acotech/Artemis">GitHub</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <h1>Artemis</h1>
+            <p class="tagline">Autonomous Defensive Security Assessment Platform</p>
+            <p class="description">
+                Artemis is a .NET 10 security tool that autonomously assesses codebases for security vulnerabilities,
+                dependency risks, and configuration issues. It provides actionable findings with severity ratings,
+                remediation guidance, and comprehensive reporting in multiple formats.
+            </p>
+            <div class="cta">
+                <a href="getting-started.html" class="btn btn-primary">Get Started</a>
+                <a href="examples.html" class="btn btn-secondary">See Examples</a>
+            </div>
+        </section>
+
+        <section class="features">
+            <h2>Key Features</h2>
+            <div class="feature-grid">
+                <div class="feature">
+                    <h3>🔍 Multi-Scanner Architecture</h3>
+                    <p>18 specialized scanners covering secrets, dependencies, linting, SAST, SBOM, and more.</p>
+                </div>
+                <div class="feature">
+                    <h3>📊 Comprehensive Reporting</h3>
+                    <p>Export findings in SARIF 2.1, CycloneDX SBOM, JSON, HTML, and text formats.</p>
+                </div>
+                <div class="feature">
+                    <h3>🔒 Fail-Closed Design</h3>
+                    <p>Deterministic, reproducible results with hash-chained audit ledger for compliance.</p>
+                </div>
+                <div class="feature">
+                    <h3>⚡ Enterprise Performance</h3>
+                    <p>Built-in benchmarks and performance regression tracking for large codebases.</p>
+                </div>
+                <div class="feature">
+                    <h3>🛡️ Property-Based Testing</h3>
+                    <p>17 FsCheck property-based tests ensuring mathematical correctness of core algorithms.</p>
+                </div>
+                <div class="feature">
+                    <h3>📦 NuGet Distribution</h3>
+                    <p>Easy installation via NuGet with global tool support.</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="quick-start">
+            <h2>Quick Start</h2>
+            <pre><code># Install as a global tool
+dotnet tool install -g artemis
+
+# Run a full assessment
+artemis scan /path/to/your/project
+
+# Generate SARIF report for CI/CD
+artemis scan /path/to/project --report sarif -o findings.sarif</code></pre>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 Artemis Project. Open source under MIT License.</p>
+    </footer>
+</body>
+</html>

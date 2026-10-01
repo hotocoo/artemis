@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Examples - Artemis</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="index.html" class="logo">Artemis</a>
+            <ul>
+                <li><a href="getting-started.html">Getting Started</a></li>
+                <li><a href="architecture.html">Architecture</a></li>
+                <li><a href="api-reference.html">API Reference</a></li>
+                <li><a href="examples.html" class="active">Examples</a></li>
+                <li><a href="https://github.com/acotech/Artemis">GitHub</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section>
+            <h1>Examples</h1>
+
+            <h2>Basic Scan</h2>
+            <pre><code># Scan current directory
+artemis scan .
+
+# Scan with high severity filter
+artemis scan . --severity high
+
+# Scan specific project
+artemis scan /path/to/project --report json -o findings.json</code></pre>
+
+            <h2>CI/CD Integration</h2>
+            <h3>GitHub Actions</h3>
+            <pre><code>name: Security Scan
+on: [push, pull_request]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet tool install -g artemis
+      - run: artemis scan . --report sarif -o findings.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: findings.sarif</code></pre>
+
+            <h3>GitLab CI</h3>
+            <pre><code>security-scan:
+  stage: test
+  script:
+    - dotnet tool install -g artemis
+    - artemis scan . --report sarif -o findings.sarif
+  artifacts:
+    reports:
+      sarif: findings.sarif</code></pre>
+
+            <h3>Jenkins</h3>
+            <pre><code>pipeline {
+    agent any
+    stages {
+        stage('Security Scan') {
+            steps {
+                sh 'dotnet tool install -g artemis'
+                sh 'artemis scan . --report sarif -o findings.sarif'
+            }
+        }
+    }
+}</code></pre>
+
+            <h2>Custom Configuration</h2>
+            <pre><code>{
+  "scanners": {
+    "secrets": {
+      "enabled": true,
+      "patterns": [
+        { "name": "AWS Key", "regex": "AKIA[0-9A-Z]{16}" }
+      ]
+    },
+    "dependencies": {
+      "enabled": true,
+      "ecosystems": ["nuget", "npm"]
+    }
+  },
+  "severity": "medium"
+}</code></pre>
+
+            <h2>Audit Ledger</h2>
+            <pre><code># Verify audit integrity
+artemis audit --verify
+
+# Export audit log
+artemis audit --export audit-log.json</code></pre>
+
+            <h2>Performance Testing</h2>
+            <pre><code># Run benchmarks
+scripts/perf-regression.sh baseline   # Establish baseline
+scripts/perf-regression.sh compare    # Compare against baseline</code></pre>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 Artemis Project. Open source under MIT License.</p>
+    </footer>
+</body>
+</html>

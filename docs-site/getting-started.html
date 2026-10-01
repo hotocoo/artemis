@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Getting Started - Artemis</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="index.html" class="logo">Artemis</a>
+            <ul>
+                <li><a href="getting-started.html" class="active">Getting Started</a></li>
+                <li><a href="architecture.html">Architecture</a></li>
+                <li><a href="api-reference.html">API Reference</a></li>
+                <li><a href="examples.html">Examples</a></li>
+                <li><a href="https://github.com/acotech/Artemis">GitHub</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section>
+            <h1>Getting Started</h1>
+
+            <h2>Installation</h2>
+            <h3>As a Global Tool</h3>
+            <pre><code>dotnet tool install -g artemis</code></pre>
+
+            <h3>From Source</h3>
+            <pre><code>git clone https://github.com/acotech/Artemis.git
+cd Artemis
+dotnet build -c Release
+dotnet run --project src/ACT.Desktop -- --help</code></pre>
+
+            <h3>Requirements</h3>
+            <ul>
+                <li>.NET 10 SDK or later</li>
+                <li>Git (for repository analysis)</li>
+            </ul>
+
+            <h2>Basic Usage</h2>
+            <pre><code># Scan a project
+artemis scan /path/to/project
+
+# Scan with specific severity filter
+artemis scan /path/to/project --severity high
+
+# Generate multiple report formats
+artemis scan /path/to/project --report sarif,json,html -o reports/</code></pre>
+
+            <h2>Command Reference</h2>
+            <pre><code>artemis scan [path] [options]
+  --severity &lt;level&gt;    Filter by severity (low|medium|high|critical)
+  --report &lt;format&gt;     Output format (sarif|json|html|text|sbom)
+  --output &lt;path&gt;       Output file/directory
+  --config &lt;path&gt;       Custom configuration file
+  --verbose             Enable verbose output
+
+artemis config [options]
+  --list                List all configuration options
+  --get &lt;key&gt;           Get a configuration value
+  --set &lt;key&gt; &lt;value&gt;   Set a configuration value
+
+artemis audit
+  --verify              Verify audit ledger integrity
+  --export &lt;path&gt;       Export audit log</code></pre>
+
+            <h2>Configuration</h2>
+            <p>Artemis uses a JSON configuration file (<code>artemis.json</code>) that can be placed in the project root or specified with <code>--config</code>.</p>
+
+            <pre><code>{
+  "scanners": {
+    "secrets": { "enabled": true },
+    "dependencies": { "enabled": true },
+    "lint": { "enabled": true },
+    "sast": { "enabled": true }
+  },
+  "severity": "medium",
+  "report": {
+    "formats": ["json", "sarif"],
+    "output": "./reports"
+  }
+}</code></pre>
+
+            <h2>CI/CD Integration</h2>
+            <h3>GitHub Actions</h3>
+            <pre><code>name: Security Scan
+on: [push, pull_request]
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet tool install -g artemis
+      - run: artemis scan . --report sarif -o findings.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: findings.sarif</code></pre>
+
+            <h3>GitLab CI</h3>
+            <pre><code>security-scan:
+  stage: test
+  script:
+    - dotnet tool install -g artemis
+    - artemis scan . --report sarif -o findings.sarif
+  artifacts:
+    reports:
+      sarif: findings.sarif</code></pre>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2026 Artemis Project. Open source under MIT License.</p>
+    </footer>
+</body>
+</html>

@@ -3,7 +3,16 @@
     <OutputType>Exe</OutputType>
     <AssemblyName>artemis</AssemblyName>
     <RootNamespace>ACT.Cli</RootNamespace>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>artemis</ToolCommandName>
+    <PackageId>artemis</PackageId>
+    <Description>Artemis - Autonomous defensive security assessment platform</Description>
+    <PackageTags>security;scanner;assessment;sarif;sast</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.0" />
   </ItemGroup>

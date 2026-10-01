@@ -29,6 +29,15 @@ jobs:
         run: dotnet test tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj --no-build -c Release
       - name: Safety tests (fail-closed invariants)
         run: dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj --no-build -c Release
+      - name: Code coverage (unit tests)
+        run: dotnet test tests/ACT.Tests/ACT.Tests.csproj --no-build -c Release --collect:"XPlat Code Coverage" --results-directory:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage/
+          if-no-files-found: ignore
 
   format-guard:
     runs-on: ubuntu-latest

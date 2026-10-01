@@ -19,3 +19,4 @@ publish/
 .DS_Store
 .DS_Store
 .zcode/
+.nuget-local/
