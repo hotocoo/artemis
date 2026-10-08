@@ -1,8 +1,11 @@
 
 using ACT.Api;
+using ACT.Cloud.Checks;
 using ACT.Contracts;
 using ACT.DependencyAnalysis;
 using ACT.Evidence;
+using ACT.Iac.Checks;
+using ACT.Kubernetes.Checks;
 using ACT.SourceAnalysis;
 using ACT.Tls.Checks;
 using ACT.Web.Checks;
@@ -107,6 +110,21 @@ public static class CheckRegistry
         metadata.Add(new ComplianceCheck(evidence).Metadata);
         metadata.Add(new LogAnalysisCheck(evidence).Metadata);
         metadata.Add(new SecurityBaselineCheck(evidence).Metadata);
+
+        // Cloud checks
+        metadata.Add(new AwsS3BucketCheck().Metadata);
+        metadata.Add(new AzureStorageAccountCheck().Metadata);
+        metadata.Add(new GcpBucketCheck().Metadata);
+
+        // Kubernetes checks
+        metadata.Add(new KubernetesPodSecurityCheck().Metadata);
+        metadata.Add(new ContainerImageCheck().Metadata);
+
+        // IaC checks
+        metadata.Add(new TerraformCheck().Metadata);
+        metadata.Add(new CloudFormationCheck().Metadata);
+        metadata.Add(new HelmChartCheck().Metadata);
+
         return metadata;
     }
 
@@ -125,7 +143,15 @@ public static class CheckRegistry
         new ConfigurationAuditCheck(),
         new ComplianceCheck(evidence),
         new LogAnalysisCheck(evidence),
-        new SecurityBaselineCheck(evidence)
+        new SecurityBaselineCheck(evidence),
+        new AwsS3BucketCheck(),
+        new AzureStorageAccountCheck(),
+        new GcpBucketCheck(),
+        new KubernetesPodSecurityCheck(),
+        new ContainerImageCheck(),
+        new TerraformCheck(),
+        new CloudFormationCheck(),
+        new HelmChartCheck()
     ];
 
     private static List<ISecurityCheck> BuildWebChecks() =>

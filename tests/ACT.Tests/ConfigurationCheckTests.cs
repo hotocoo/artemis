@@ -35,7 +35,7 @@ public class ConfigurationCheckTests
         Assert.Contains("ACT-WEB-COMPLIANCE-001", ids);
         Assert.Contains("ACT-WEB-LOGANALYSIS-001", ids);
         Assert.Contains("ACT-WEB-BASELINE-001", ids);
-        Assert.Equal(6, checks.Count);
+        Assert.Equal(14, checks.Count);
     }
 
     [Fact]

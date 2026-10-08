@@ -33,5 +33,22 @@
     <ProjectReference Include="../ACT.Reporting/ACT.Reporting.csproj" />
     <ProjectReference Include="../ACT.Llm/ACT.Llm.csproj" />
     <ProjectReference Include="../ACT.Remediation/ACT.Remediation.csproj" />
+    <ProjectReference Include="../ACT.Cloud/ACT.Cloud.csproj" />
+    <ProjectReference Include="../ACT.Kubernetes/ACT.Kubernetes.csproj" />
+    <ProjectReference Include="../ACT.Iac/ACT.Iac.csproj" />
+    <ProjectReference Include="../ACT.Alerting/ACT.Alerting.csproj" />
+    <ProjectReference Include="../ACT.Compliance/ACT.Compliance.csproj" />
+    <ProjectReference Include="../ACT.ThreatIntel/ACT.ThreatIntel.csproj" />
+    <ProjectReference Include="../ACT.Reporting.Advanced/ACT.Reporting.Advanced.csproj" />
+    <ProjectReference Include="../ACT.MultiTenancy/ACT.MultiTenancy.csproj" />
+    <ProjectReference Include="../ACT.Distributed/ACT.Distributed.csproj" />
+    <ProjectReference Include="../ACT.Auth/ACT.Auth.csproj" />
+    <ProjectReference Include="../ACT.Plugins/ACT.Plugins.csproj" />
+    <ProjectReference Include="../ACT.Encryption/ACT.Encryption.csproj" />
+    <ProjectReference Include="../ACT.Backup/ACT.Backup.csproj" />
+    <ProjectReference Include="../ACT.I18n/ACT.I18n.csproj" />
+    <ProjectReference Include="../ACT.Search/ACT.Search.csproj" />
+    <ProjectReference Include="../ACT.Sla/ACT.Sla.csproj" />
+    <ProjectReference Include="../ACT.Workflow/ACT.Workflow.csproj" />
   </ItemGroup>
 </Project>

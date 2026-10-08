@@ -64,7 +64,10 @@ public enum CheckCategory
     Authorization,
     Source,
     Dependency,
-    Configuration
+    Configuration,
+    Cloud,
+    Container,
+    Iac
 }
 
 /// <summary>
