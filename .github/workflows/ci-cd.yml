@@ -26,7 +26,8 @@ jobs:
         run: dotnet --version
       - name: Restore packages
         run: |
-          dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900
+          dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 > restore.log 2>&1
+          cat restore.log
           echo "Restore completed successfully"
       - name: Analyze code quality
         run: dotnet format ${{ env.SOLUTION }} --verify-no-changes
