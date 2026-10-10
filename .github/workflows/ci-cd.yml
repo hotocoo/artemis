@@ -51,6 +51,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Clear NuGet cache
+        run: dotnet nuget locals all --clear
       - name: Restore packages
         run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900
       - name: Build
