@@ -175,6 +175,17 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+        continue-on-error: true
+      - name: Print Docker login status
+        run: |
+          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
+            echo "Docker Hub credentials not set. Skipping Docker build."
+            exit 0
+          fi
+          echo "Docker Hub credentials set."
+      - name: Skip Docker build if credentials not set
+        if: steps.login.outcome == 'success' && (env.DOCKERHUB_USERNAME == '' || env.DOCKERHUB_TOKEN == '')
+        run: exit 0
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v5
