@@ -1,0 +1,27 @@
+[Unit]
+Description=Artemis Autonomous Security Assessment Platform
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=artemis
+Group=artemis
+WorkingDirectory=/opt/artemis
+ExecStart=/opt/artemis/artemis console
+Restart=always
+RestartSec=10
+Environment=ASPNETCORE_URLS=http://+:8080
+Environment=ARTEMIS_DATABASE_PATH=/var/lib/artemis/artemis.db
+Environment=ARTEMIS_LOG_LEVEL=Information
+Environment=ARTEMIS_CONSOLE_PORT=8080
+Environment=ARTEMIS_OPEN_BROWSER=false
+Environment=ARTEMIS_METRICS_ENABLED=true
+Environment=ARTEMIS_METRICS_PORT=9090
+LimitNOFILE=65536
+LimitNPROC=4096
+MemoryMax=2G
+CPUQuota=200%
+
+[Install]
+WantedBy=multi-user.target

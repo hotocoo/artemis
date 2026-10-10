@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: artemis-config
+  namespace: artemis
+  labels:
+    app.kubernetes.io/name: artemis
+    app.kubernetes.io/part-of: artemis
+data:
+  ARTEMIS_LOG_LEVEL: "Information"
+  ARTEMIS_CONSOLE_PORT: "8080"
+  ARTEMIS_OPEN_BROWSER: "false"
+  ARTEMIS_METRICS_ENABLED: "true"
+  ARTEMIS_METRICS_PORT: "9090"

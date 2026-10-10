@@ -1,8 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- The operator-facing executable name used by docs, release manifests, and PATH installs;
-         without it the single-file publish would ship as ACT.Desktop(.exe). -->
     <AssemblyName>artemis-console</AssemblyName>
     <RootNamespace>ACT.Desktop</RootNamespace>
   </PropertyGroup>
@@ -10,18 +9,28 @@
     <ProjectReference Include="../ACT.Contracts/ACT.Contracts.csproj" />
     <ProjectReference Include="../ACT.Core/ACT.Core.csproj" />
     <ProjectReference Include="../ACT.Cli/ACT.Cli.csproj" />
+    <ProjectReference Include="../ACT.Alerting/ACT.Alerting.csproj" />
+    <ProjectReference Include="../ACT.Compliance/ACT.Compliance.csproj" />
+    <ProjectReference Include="../ACT.MultiTenancy/ACT.MultiTenancy.csproj" />
+    <ProjectReference Include="../ACT.Search/ACT.Search.csproj" />
+    <ProjectReference Include="../ACT.Sla/ACT.Sla.csproj" />
+    <ProjectReference Include="../ACT.Workflow/ACT.Workflow.csproj" />
+    <ProjectReference Include="../ACT.ThreatIntel/ACT.ThreatIntel.csproj" />
   </ItemGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup>
-    <!-- The integration tests exercise the console's HTTP handlers (emergency stop, triage)
-         through the real Pages class; internals visibility is scoped to that test assembly. -->
     <InternalsVisibleTo Include="ACT.IntegrationTests" />
   </ItemGroup>
   <ItemGroup>
-    <!-- The integration tests exercise the console's HTTP handlers (emergency stop, triage)
-         through the real Pages class; internals visibility is scoped to that test assembly. -->
-    <InternalsVisibleTo Include="ACT.IntegrationTests" />
+    <PackageReference Include="Serilog.AspNetCore" Version="8.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="5.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="5.0.0" />
+    <PackageReference Include="OpenTelemetry" Version="1.8.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.HttpListener" Version="1.9.0-alpha.1" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.8.1" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
   </ItemGroup>
 </Project>

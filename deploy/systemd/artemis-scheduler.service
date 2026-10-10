@@ -1,0 +1,20 @@
+[Unit]
+Description=Artemis Schedule Runner
+After=network-online.target artemis.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=artemis
+Group=artemis
+WorkingDirectory=/opt/artemis
+ExecStart=/opt/artemis/artemis schedule run
+Restart=always
+RestartSec=30
+Environment=ARTEMIS_DATABASE_PATH=/var/lib/artemis/artemis.db
+Environment=ARTEMIS_LOG_LEVEL=Information
+LimitNOFILE=65536
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: artemis-console
+  namespace: artemis
+  labels:
+    app.kubernetes.io/name: artemis-console
+    app.kubernetes.io/part-of: artemis
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - artemis.example.com
+      secretName: artemis-tls
+  rules:
+    - host: artemis.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: artemis-console
+                port:
+                  number: 80

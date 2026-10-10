@@ -1,0 +1,112 @@
+version: "3.9"
+
+services:
+  artemis-console:
+    image: artemis:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: artemis-console
+    ports:
+      - "8080:8080"
+    environment:
+      - ASPNETCORE_URLS=http://+:8080
+      - ARTEMIS_DATABASE_PATH=/data/artemis.db
+      - ARTEMIS_LOG_LEVEL=Information
+      - ARTEMIS_CONSOLE_PORT=8080
+      - ARTEMIS_OPEN_BROWSER=false
+      - ARTEMIS_METRICS_ENABLED=true
+      - ARTEMIS_METRICS_PORT=9090
+    volumes:
+      - artemis-data:/data
+      - artemis-backups:/backups
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  artemis-scheduler:
+    image: artemis:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: artemis-scheduler
+    command: ["artemis", "schedule", "run"]
+    environment:
+      - ARTEMIS_DATABASE_PATH=/data/artemis.db
+      - ARTEMIS_LOG_LEVEL=Information
+    volumes:
+      - artemis-data:/data
+    depends_on:
+      artemis-console:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1G
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: artemis-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d'
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: artemis-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=artemis
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+volumes:
+  artemis-data:
+  artemis-backups:
+  prometheus-data:
+  grafana-data:
