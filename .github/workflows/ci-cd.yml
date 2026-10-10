@@ -34,7 +34,7 @@ jobs:
           path: restore.log
 
       - name: Analyze code quality
-        run: dotnet format ${{ env.SOLUTION }} --verify-no-changes
+        run: dotnet format ${{ env.SOLUTION }} --verify-no-changes --no-restore
 
   build-test:
     name: Build & Test
