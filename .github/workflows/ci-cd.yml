@@ -25,8 +25,9 @@ jobs:
       - name: Print .NET version
         run: dotnet --version
       - name: Restore packages
-        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 || (cat nuget.log; exit 1)
-        continue-on-error: false
+        run: |
+          dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900
+          echo "Restore completed successfully"
       - name: Analyze code quality
         run: dotnet format ${{ env.SOLUTION }} --verify-no-changes
 
