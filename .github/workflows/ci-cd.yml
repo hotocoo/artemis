@@ -25,7 +25,7 @@ jobs:
       - name: Print .NET version
         run: dotnet --version
       - name: Restore packages
-        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force --no-cache
+        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force
 
       - name: Analyze code quality
         run: dotnet format ${{ env.SOLUTION }} --verify-no-changes
@@ -46,7 +46,7 @@ jobs:
       - name: Clear NuGet cache
         run: dotnet nuget locals all --clear
       - name: Restore packages
-        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force --no-cache --packages /tmp/nuget-cache --force --no-cache
+        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force --packages /tmp/nuget-cache --force --no-cache
       - name: Build
         run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900
       - name: Run unit tests
