@@ -46,7 +46,13 @@ jobs:
           name: integration-log-${{ matrix.os }}
           path: integration.log
       - name: Safety tests (fail-closed invariants)
-        run: dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj --no-build -c Release
+        run: dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj --no-build -c Release 2>&1 | tee safety.log
+      - name: Upload safety test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: safety-log-${{ matrix.os }}
+          path: safety.log
       - name: Code coverage (unit tests)
         run: dotnet test tests/ACT.Tests/ACT.Tests.csproj --no-build -c Release --collect:"XPlat Code Coverage" --results-directory:coverage
       - name: Upload coverage report
