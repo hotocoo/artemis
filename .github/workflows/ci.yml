@@ -38,7 +38,13 @@ jobs:
       - name: Unit tests
         run: dotnet test tests/ACT.Tests/ACT.Tests.csproj --no-build -c Release
       - name: Integration tests (lab fixtures, loopback only)
-        run: dotnet test tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj --no-build -c Release
+        run: dotnet test tests/ACT.IntegrationTests/ACT.IntegrationTests.csproj --no-build -c Release 2>&1 | tee integration.log
+      - name: Upload integration test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-log-${{ matrix.os }}
+          path: integration.log
       - name: Safety tests (fail-closed invariants)
         run: dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj --no-build -c Release
       - name: Code coverage (unit tests)
