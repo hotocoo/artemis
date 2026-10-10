@@ -136,7 +136,13 @@ jobs:
           name: build-log-${{ matrix.os }}
           path: build.log
       - name: Run SAST scan
-        run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 -p:RunAnalyzers=true -p:AnalysisLevel=latest
+        run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 -p:RunAnalyzers=true -p:AnalysisLevel=latest 2>&1 | tee sast.log
+      - name: Upload SAST scan log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-log
+          path: sast.log
       - name: Generate CycloneDX SBOM
         run: dotnet tool install --global CycloneDX && cyclonedx src/ACT.Cli/ACT.Cli.csproj --output-type json --output-file sbom.json
       - name: Upload SBOM
