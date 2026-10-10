@@ -22,6 +22,8 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+      - name: Print .NET version
+        run: dotnet --version
       - name: Restore packages
         run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 || (cat nuget.log; exit 1)
         continue-on-error: false
