@@ -25,10 +25,7 @@ jobs:
       - name: Print .NET version
         run: dotnet --version
       - name: Restore packages
-        run: |
-          dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 > restore.log 2>&1
-          cat restore.log
-          echo "Restore completed successfully"
+        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force --no-cache
       - name: Upload restore log
         if: always()
         uses: actions/upload-artifact@v4
