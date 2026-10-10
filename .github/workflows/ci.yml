@@ -71,7 +71,13 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Verify formatting
-        run: dotnet format Artemis.slnx --verify-no-changes
+        run: dotnet format Artemis.slnx --verify-no-changes 2>&1 | tee format.log
+      - name: Upload format log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: format-log
+          path: format.log
 
   forbidden-patterns:
     runs-on: ubuntu-latest
