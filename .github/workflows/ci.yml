@@ -20,7 +20,7 @@ jobs:
         with:
           dotnet-version: '10.0.x'
       - name: Restore
-        run: dotnet restore Artemis.slnx -p:NoWarn=NU1900 --packages %TEMP%\nuget-cache --force --no-cache 2>&1 | tee restore.log
+        run: dotnet restore Artemis.slnx -p:NoWarn=NU1900 --packages %TEMP%\nuget-cache --force 2>&1 | tee restore.log
       - name: Upload restore log
         if: failure()
         uses: actions/upload-artifact@v4
