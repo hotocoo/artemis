@@ -23,7 +23,8 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Restore packages
-        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900
+        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 || (cat nuget.log; exit 1)
+        continue-on-error: false
       - name: Analyze code quality
         run: dotnet format ${{ env.SOLUTION }} --verify-no-changes
 
