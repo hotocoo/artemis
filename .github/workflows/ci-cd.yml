@@ -60,7 +60,13 @@ jobs:
           name: restore-log
           path: restore.log --packages /tmp/nuget-cache --force --no-cache
       - name: Build
-        run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900
+        run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 2>&1 | tee build.log
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.os }}
+          path: build.log
       - name: Run unit tests
         run: dotnet test tests/ACT.Tests/ACT.Tests.csproj --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 --no-build --logger trx
       - name: Run security tests
@@ -86,7 +92,13 @@ jobs:
       - name: Restore packages
         run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900
       - name: Build
-        run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900
+        run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 2>&1 | tee build.log
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.os }}
+          path: build.log
       - name: Run SAST scan
         run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 -p:RunAnalyzers=true -p:AnalysisLevel=latest
       - name: Generate CycloneDX SBOM
