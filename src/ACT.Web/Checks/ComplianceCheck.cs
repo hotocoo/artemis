@@ -78,7 +78,7 @@ public sealed class ComplianceCheck : ISecurityCheck
     {
         var findings = new List<Finding>();
         var webConfigFiles = RepositoryFileScanner.FindFiles(repoPath, "web.config", "nginx.conf", "apache.conf");
-        
+
         foreach (var file in webConfigFiles)
         {
             try
@@ -94,7 +94,7 @@ public sealed class ComplianceCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 
@@ -102,7 +102,7 @@ public sealed class ComplianceCheck : ISecurityCheck
     {
         var findings = new List<Finding>();
         var apiFiles = RepositoryFileScanner.FindFiles(repoPath, "*.cs", "*.js", "*.py");
-        
+
         foreach (var file in apiFiles)
         {
             try
@@ -122,7 +122,7 @@ public sealed class ComplianceCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 
@@ -130,7 +130,7 @@ public sealed class ComplianceCheck : ISecurityCheck
     {
         var findings = new List<Finding>();
         var authFiles = RepositoryFileScanner.FindFiles(repoPath, "*auth*.cs", "*login*.cs", "*security*.cs");
-        
+
         foreach (var file in authFiles)
         {
             try
@@ -147,7 +147,7 @@ public sealed class ComplianceCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 

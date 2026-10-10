@@ -89,17 +89,17 @@ public sealed class LogAnalysisCheck : ISecurityCheck
         var findings = new List<Finding>();
         var logFiles = RepositoryFileScanner.FindFiles(repoPath, "*.log", "*.txt")
             .Where(f => f.Contains("log", StringComparison.OrdinalIgnoreCase));
-        
+
         foreach (var file in logFiles)
         {
             try
             {
                 var lines = File.ReadAllLines(file);
-                
+
                 for (var i = 0; i < lines.Length; i++)
                 {
                     var line = lines[i];
-                    
+
                     foreach (var pattern in ThreatPatterns)
                     {
                         if (line.Contains(pattern, StringComparison.OrdinalIgnoreCase))
@@ -112,7 +112,7 @@ public sealed class LogAnalysisCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 

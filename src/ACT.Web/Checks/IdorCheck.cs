@@ -57,19 +57,19 @@ public sealed class IdorCheck : ISecurityCheck
         {
             var baseUrl = context.BaseUrl ?? new Uri(context.Asset.CanonicalTarget);
             var httpEngine = context.Assessment.Http;
-            
+
             var findings = new List<Finding>();
             var evidence = new List<EvidenceItem>();
             var requestsMade = 0;
 
             // Test common IDOR patterns
             var testPaths = new[] { "/user", "/profile", "/account", "/settings" };
-            
+
             foreach (var path in testPaths)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var testUrl = new Uri(baseUrl, path);
-                
+
                 // Test with different object IDs
                 var testUrls = new[]
                 {
@@ -77,18 +77,18 @@ public sealed class IdorCheck : ISecurityCheck
                     $"{testUrl}/456",
                     $"{testUrl}/789"
                 };
-                
+
                 foreach (var testUri in testUrls)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    
+
                     try
                     {
                         var response = await httpEngine.SendAsync(
                             SafeHttpRequest.Get(new Uri(testUri), CorrelationId.New()),
                             cancellationToken);
                         requestsMade++;
-                        
+
                         // If we can access different object IDs without proper authorization, it might be vulnerable
                         if (response.StatusCode == 200)
                         {
@@ -158,7 +158,7 @@ public sealed class IdorCheck : ISecurityCheck
     private EvidenceItem CreateEvidence(SecurityCheckContext context, Uri baseUrl, string testUrl, SafeHttpResponse response)
     {
         var correlation = CorrelationId.New();
-        
+
         return _evidenceFactory.Create(
             Guid.NewGuid(),
             EvidenceKind.HttpResponseMetadata,

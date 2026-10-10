@@ -64,35 +64,35 @@ public sealed class OpenRedirectCheck : ISecurityCheck
         {
             var baseUrl = context.BaseUrl ?? new Uri(context.Asset.CanonicalTarget);
             var httpEngine = context.Assessment.Http;
-            
+
             var findings = new List<Finding>();
             var evidence = new List<EvidenceItem>();
             var requestsMade = 0;
 
             // Test common redirect parameters
             var testPaths = new[] { "/", "/redirect", "/go", "/return" };
-            
+
             foreach (var path in testPaths)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var testUrl = new Uri(baseUrl, path);
-                
+
                 foreach (var param in new[] { "url", "redirect", "return", "next", "dest" })
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    
+
                     foreach (var testTarget in TestUrls)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         var testUri = $"{testUrl}?{param}={Uri.EscapeDataString(testTarget)}";
-                        
+
                         try
                         {
                             var response = await httpEngine.SendAsync(
                                 SafeHttpRequest.Get(new Uri(testUri), CorrelationId.New()),
                                 cancellationToken);
                             requestsMade++;
-                            
+
                             // Check if we're redirected to the test URL
                             if (response.FinalUri.Host.Equals("evil.com", StringComparison.OrdinalIgnoreCase) ||
                                 response.FinalUri.Host.Equals("attacker.org", StringComparison.OrdinalIgnoreCase))
@@ -164,7 +164,7 @@ public sealed class OpenRedirectCheck : ISecurityCheck
     private EvidenceItem CreateEvidence(SecurityCheckContext context, Uri baseUrl, string testUrl, SafeHttpResponse response)
     {
         var correlation = CorrelationId.New();
-        
+
         return _evidenceFactory.Create(
             Guid.NewGuid(),
             EvidenceKind.HttpResponseMetadata,

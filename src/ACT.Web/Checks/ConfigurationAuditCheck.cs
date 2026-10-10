@@ -75,9 +75,9 @@ public sealed class ConfigurationAuditCheck : ISecurityCheck
     {
         var findings = new List<Finding>();
         var debugPatterns = new[] { "DEBUG=true", "DEBUG=True", "debug=true", "debug=True" };
-        
+
         var configFiles = RepositoryFileScanner.FindFiles(repoPath, "*.env*");
-        
+
         foreach (var file in configFiles)
         {
             try
@@ -87,7 +87,7 @@ public sealed class ConfigurationAuditCheck : ISecurityCheck
                 {
                     if (content.Contains(pattern, StringComparison.OrdinalIgnoreCase))
                     {
-                        findings.Add(CreateFinding(context, file, "Debug Mode Enabled", 
+                        findings.Add(CreateFinding(context, file, "Debug Mode Enabled",
                             "Debug mode is enabled in configuration.", Severity.High));
                         break;
                     }
@@ -95,7 +95,7 @@ public sealed class ConfigurationAuditCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 
@@ -103,9 +103,9 @@ public sealed class ConfigurationAuditCheck : ISecurityCheck
     {
         var findings = new List<Finding>();
         var credentialPatterns = new[] { "password=", "passwd=", "api_key=", "secret=", "token=" };
-        
+
         var configFiles = RepositoryFileScanner.FindFiles(repoPath, "*.env*", "*.config");
-        
+
         foreach (var file in configFiles)
         {
             try
@@ -141,7 +141,7 @@ public sealed class ConfigurationAuditCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 

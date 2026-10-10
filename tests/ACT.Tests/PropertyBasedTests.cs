@@ -1,7 +1,7 @@
 
 using System.Net;
-using ACT.Scope;
 using ACT.DependencyAnalysis;
+using ACT.Scope;
 using FsCheck;
 using FsCheck.Xunit;
 using Xunit;

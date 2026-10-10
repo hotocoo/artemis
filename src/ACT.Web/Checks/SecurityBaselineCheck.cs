@@ -78,7 +78,7 @@ public sealed class SecurityBaselineCheck : ISecurityCheck
     {
         var findings = new List<Finding>();
         var packageFiles = RepositoryFileScanner.FindFiles(repoPath, "package.json", "requirements.txt", "*.csproj");
-        
+
         foreach (var file in packageFiles)
         {
             try
@@ -95,7 +95,7 @@ public sealed class SecurityBaselineCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 
@@ -103,7 +103,7 @@ public sealed class SecurityBaselineCheck : ISecurityCheck
     {
         var findings = new List<Finding>();
         var sourceFiles = RepositoryFileScanner.FindFiles(repoPath, "*.cs", "*.js", "*.py");
-        
+
         foreach (var file in sourceFiles)
         {
             try
@@ -122,7 +122,7 @@ public sealed class SecurityBaselineCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 
@@ -130,7 +130,7 @@ public sealed class SecurityBaselineCheck : ISecurityCheck
     {
         var findings = new List<Finding>();
         var sourceFiles = RepositoryFileScanner.FindFiles(repoPath, "*.cs", "*.js", "*.py");
-        
+
         foreach (var file in sourceFiles)
         {
             try
@@ -147,7 +147,7 @@ public sealed class SecurityBaselineCheck : ISecurityCheck
             }
             catch { }
         }
-        
+
         return findings;
     }
 

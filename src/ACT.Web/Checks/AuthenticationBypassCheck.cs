@@ -57,19 +57,19 @@ public sealed class AuthenticationBypassCheck : ISecurityCheck
         {
             var baseUrl = context.BaseUrl ?? new Uri(context.Asset.CanonicalTarget);
             var httpEngine = context.Assessment.Http;
-            
+
             var findings = new List<Finding>();
             var evidence = new List<EvidenceItem>();
             var requestsMade = 0;
 
             // Test common authentication bypass techniques
             var testPaths = new[] { "/admin", "/dashboard", "/profile", "/settings" };
-            
+
             foreach (var path in testPaths)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var testUrl = new Uri(baseUrl, path);
-                
+
                 // Test 1: Direct access without authentication
                 try
                 {
@@ -77,7 +77,7 @@ public sealed class AuthenticationBypassCheck : ISecurityCheck
                         SafeHttpRequest.Get(testUrl, CorrelationId.New()),
                         cancellationToken);
                     requestsMade++;
-                    
+
                     // If we get 200 OK without authentication, it might be vulnerable
                     if (response.StatusCode == 200)
                     {
@@ -86,7 +86,7 @@ public sealed class AuthenticationBypassCheck : ISecurityCheck
                     }
                 }
                 catch (HttpRequestException) { }
-                
+
                 // Test 2: Authentication header manipulation
                 var testUri = $"{testUrl}?auth=bypass";
                 try
@@ -95,7 +95,7 @@ public sealed class AuthenticationBypassCheck : ISecurityCheck
                         SafeHttpRequest.Get(new Uri(testUri), CorrelationId.New()),
                         cancellationToken);
                     requestsMade++;
-                    
+
                     if (response.StatusCode == 200)
                     {
                         findings.Add(CreateFinding(context, baseUrl, testUri, "Authentication Header Manipulation"));
@@ -162,7 +162,7 @@ public sealed class AuthenticationBypassCheck : ISecurityCheck
     private EvidenceItem CreateEvidence(SecurityCheckContext context, Uri baseUrl, string testUrl, SafeHttpResponse response)
     {
         var correlation = CorrelationId.New();
-        
+
         return _evidenceFactory.Create(
             Guid.NewGuid(),
             EvidenceKind.HttpResponseMetadata,

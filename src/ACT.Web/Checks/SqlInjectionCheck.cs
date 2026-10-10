@@ -83,36 +83,36 @@ public sealed class SqlInjectionCheck : ISecurityCheck
         {
             var baseUrl = context.BaseUrl ?? new Uri(context.Asset.CanonicalTarget);
             var httpEngine = context.Assessment.Http;
-            
+
             var findings = new List<Finding>();
             var evidence = new List<EvidenceItem>();
             var requestsMade = 0;
 
             var testPaths = new[] { "/", "/search", "/login", "/api", "/product", "/user" };
-            
+
             foreach (var path in testPaths)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var testUrl = new Uri(baseUrl, path);
-                
+
                 foreach (var param in new[] { "q", "query", "id", "user", "search" })
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    
+
                     foreach (var payload in TestPayloads)
                     {
                         cancellationToken.ThrowIfCancellationRequested();
                         var testUri = $"{testUrl}?{param}={Uri.EscapeDataString(payload)}";
-                        
+
                         try
                         {
                             var response = await httpEngine.SendAsync(
                                 SafeHttpRequest.Get(new Uri(testUri), CorrelationId.New()),
                                 cancellationToken);
                             requestsMade++;
-                            
+
                             var responseBody = response.BodyAsText();
-                            
+
                             foreach (var pattern in ErrorPatterns)
                             {
                                 if (responseBody.Contains(pattern, StringComparison.OrdinalIgnoreCase))
@@ -185,7 +185,7 @@ public sealed class SqlInjectionCheck : ISecurityCheck
     private EvidenceItem CreateEvidence(SecurityCheckContext context, Uri baseUrl, string testUrl, SafeHttpResponse response)
     {
         var correlation = CorrelationId.New();
-        
+
         return _evidenceFactory.Create(
             Guid.NewGuid(),
             EvidenceKind.HttpResponseMetadata,

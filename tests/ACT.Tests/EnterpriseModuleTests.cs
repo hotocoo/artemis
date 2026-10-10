@@ -6,8 +6,8 @@ using ACT.Encryption;
 using ACT.Iac.Checks;
 using ACT.Kubernetes.Checks;
 using ACT.Reporting.Advanced;
-using ACT.Sla;
 using ACT.Search;
+using ACT.Sla;
 
 namespace ACT.Tests;
 

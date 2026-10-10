@@ -1,7 +1,7 @@
 
 using System.Diagnostics;
-using BenchmarkDotNet.Attributes;
 using ACT.SourceAnalysis;
+using BenchmarkDotNet.Attributes;
 
 namespace ACT.Benchmarks;
 

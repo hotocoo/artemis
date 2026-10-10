@@ -10,12 +10,12 @@ using ACT.Persistence;
 using ACT.Policy;
 using ACT.Reporting;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting;
 
 var rawArgs = args;
 GlobalOptions globals;
