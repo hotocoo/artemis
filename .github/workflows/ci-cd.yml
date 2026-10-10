@@ -201,10 +201,17 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: src/ACT.Cli/Dockerfile
+          file: docker/Dockerfile.cli
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+        continue-on-error: true
+      - name: Upload Docker build log
+        if: always()
+        run: |
+          if [ -f docker-build.log ]; then
+            cat docker-build.log
+          fi
 
   release:
     name: GitHub Release
