@@ -29,6 +29,12 @@ jobs:
           dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 > restore.log 2>&1
           cat restore.log
           echo "Restore completed successfully"
+      - name: Upload restore log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-log
+          path: restore.log
       - name: Analyze code quality
         run: dotnet format ${{ env.SOLUTION }} --verify-no-changes
 
