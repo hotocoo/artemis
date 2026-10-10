@@ -144,7 +144,13 @@ jobs:
           name: sast-log
           path: sast.log
       - name: Generate CycloneDX SBOM
-        run: dotnet tool install --global CycloneDX && cyclonedx src/ACT.Cli/ACT.Cli.csproj --output-type json --output-file sbom.json
+        run: dotnet tool install --global CycloneDX && cyclonedx src/ACT.Cli/ACT.Cli.csproj --output-type json --output-file sbom.json 2>&1 | tee sbom.log
+      - name: Upload SBOM log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-log
+          path: sbom.log
       - name: Upload SBOM
         uses: actions/upload-artifact@v4
         with:
