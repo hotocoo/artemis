@@ -30,6 +30,12 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
+          name: restore-log-security
+          path: restore.log --packages /tmp/nuget-cache --force 2>&1 | tee restore.log
+      - name: Upload restore log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
           name: restore-log
           path: restore.log
 
@@ -53,6 +59,12 @@ jobs:
         run: dotnet nuget locals all --clear
       - name: Restore packages
         run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force 2>&1 | tee restore.log
+      - name: Upload restore log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-log-security
+          path: restore.log --packages /tmp/nuget-cache --force 2>&1 | tee restore.log
       - name: Upload restore log
         if: failure()
         uses: actions/upload-artifact@v4
@@ -108,7 +120,13 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Restore packages
-        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900
+        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force 2>&1 | tee restore.log
+      - name: Upload restore log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-log-security
+          path: restore.log
       - name: Build
         run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 2>&1 | tee build.log
       - name: Upload build log
@@ -177,7 +195,13 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - name: Restore packages
-        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900
+        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force 2>&1 | tee restore.log
+      - name: Upload restore log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-log-security
+          path: restore.log
       - name: Build CLI
         run: dotnet publish src/ACT.Cli/ACT.Cli.csproj --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 -o publish/cli
       - name: Build Console
