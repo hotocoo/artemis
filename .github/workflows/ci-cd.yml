@@ -68,7 +68,13 @@ jobs:
           name: build-log-${{ matrix.os }}
           path: build.log
       - name: Run unit tests
-        run: dotnet test tests/ACT.Tests/ACT.Tests.csproj --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 --no-build --logger trx
+        run: dotnet test tests/ACT.Tests/ACT.Tests.csproj --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 --no-build --logger trx 2>&1 | tee unit.log
+      - name: Upload unit test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-log-${{ matrix.os }}
+          path: unit.log
       - name: Run security tests
         run: dotnet test tests/ACT.SecurityTests/ACT.SecurityTests.csproj --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 --no-build --logger trx
       - name: Run integration tests
