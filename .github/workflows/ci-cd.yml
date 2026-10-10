@@ -54,7 +54,7 @@ jobs:
       - name: Clear NuGet cache
         run: dotnet nuget locals all --clear
       - name: Restore packages
-        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force
+        run: dotnet restore ${{ env.SOLUTION }} -p:NoWarn=NU1900 --packages /tmp/nuget-cache --force --no-cache
       - name: Build
         run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900
       - name: Run unit tests
