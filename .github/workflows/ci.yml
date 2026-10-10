@@ -28,7 +28,13 @@ jobs:
           name: restore-log-${{ matrix.os }}
           path: restore.log
       - name: Build (warnings are errors)
-        run: dotnet build Artemis.slnx --no-restore -c Release
+        run: dotnet build Artemis.slnx --no-restore -c Release 2>&1 | tee build.log
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.os }}
+          path: build.log
       - name: Unit tests
         run: dotnet test tests/ACT.Tests/ACT.Tests.csproj --no-build -c Release
       - name: Integration tests (lab fixtures, loopback only)
