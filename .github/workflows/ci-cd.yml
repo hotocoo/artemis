@@ -30,12 +30,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: restore-log-security
-          path: restore.log --packages /tmp/nuget-cache --force 2>&1 | tee restore.log
-      - name: Upload restore log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
           name: restore-log
           path: restore.log
 
@@ -63,14 +57,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: restore-log-security
-          path: restore.log --packages /tmp/nuget-cache --force 2>&1 | tee restore.log
-      - name: Upload restore log
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
           name: restore-log
-          path: restore.log --packages /tmp/nuget-cache --force --no-cache
+          path: restore.log
       - name: Build
         run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 2>&1 | tee build.log
       - name: Upload build log
@@ -133,7 +121,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: build-log-${{ matrix.os }}
+          name: build-log
           path: build.log
       - name: Run SAST scan
         run: dotnet build ${{ env.SOLUTION }} --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 -p:RunAnalyzers=true -p:AnalysisLevel=latest 2>&1 | tee sast.log
@@ -171,22 +159,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Login to Docker Hub
+        id: login
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
         continue-on-error: true
-      - name: Print Docker login status
-        run: |
-          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_TOKEN }}" ]; then
-            echo "Docker Hub credentials not set. Skipping Docker build."
-            exit 0
-          fi
-          echo "Docker Hub credentials set."
-      - name: Skip Docker build if credentials not set
-        if: steps.login.outcome == 'success' && (env.DOCKERHUB_USERNAME == '' || env.DOCKERHUB_TOKEN == '')
-        run: exit 0
       - name: Extract metadata
+        if: steps.login.outcome == 'success'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -198,10 +178,11 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}
       - name: Build and push CLI
+        if: steps.login.outcome == 'success'
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: docker/Dockerfile.cli
+          file: Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -236,6 +217,15 @@ jobs:
         run: dotnet publish src/ACT.Cli/ACT.Cli.csproj --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 -o publish/cli
       - name: Build Console
         run: dotnet publish src/ACT.Desktop/ACT.Desktop.csproj --configuration ${{ env.CONFIGURATION }} -p:NoWarn=NU1900 -o publish/console
+      - name: Download SBOM from security scan
+        uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: .
+        continue-on-error: true
+      - name: Generate SBOM if not downloaded
+        if: ${{ !hashFiles('sbom.json') }}
+        run: dotnet tool install --global CycloneDX && cyclonedx src/ACT.Cli/ACT.Cli.csproj --output-type json --output-file sbom.json
       - name: Create release assets
         run: |
           cd publish
